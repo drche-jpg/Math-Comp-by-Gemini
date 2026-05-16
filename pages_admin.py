@@ -102,6 +102,20 @@ Rules: Use LaTeX for ALL math. Choices array ONLY contains text, no letters like
             comp,level,topic,diff,year,atype = meta_fields("t_")
             q_text = st.text_area("Question text (LaTeX supported)", height=120, key="t_qtext")
             if q_text: st.markdown(q_text)
+            
+            choices = []
+            if atype in ("mc4","mc5"):
+                n = 4 if atype=="mc4" else 5
+                ch_cols = st.columns(n)
+                for i in range(n): choices.append(ch_cols[i].text_input(chr(65+i), key=f"t_ch{i}"))
+            correct = st.text_input("Correct Answer", key="t_correct")
+            sol_text = st.text_area("Solution text", height=180, key="t_sol_text")
+
+            if st.button("💾  Save question", type="primary", key="t_save"):
+                if not q_text: st.error("Question text is required.")
+                else:
+                    save_question({"competition": comp, "level": level, "topic": topic, "difficulty": diff, "year": year, "answer_type": atype, "question_text": q_text, "choices": choices, "correct_answer": correct, "solution_text": sol_text})
+                    st.success("✅  Question saved!")
 
         elif method == "🤖  AI-OCR from image":
             comp,level,topic,diff,year,atype = meta_fields("ai_")
