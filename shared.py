@@ -693,4 +693,224 @@ def compute_score(competition, questions, answers) -> dict:
     for q in questions:
         qid=q["id"]; topic=q.get("topic","Other")
         if topic not in tbd: topic="Other"
-        ca=
+        ca=str(q.get("correct_answer","")).strip().upper()
+        ch=str(answers.get(qid,"")).strip().upper()
+        ok=ch==ca and ch!=""; blank=ch==""
+        raw  += rules["correct"] if ok else (rules["blank"] if blank else rules["wrong"])
+        max_s+= rules["correct"]
+        tbd[topic]["total"]+=1
+        if ok: tbd[topic]["correct"]+=1
+        pqs.append({"qid":qid,"correct":ok,"chosen":answers.get(qid),"right_answer":q.get("correct_answer"),"time_sec":answers.get(f"{qid}__time",0)})
+    tbd = {k:v for k,v in tbd.items() if v["total"]>0}
+    pct = round(raw/max_s*100,1) if max_s>0 else 0.0
+    return {"raw_score":round(raw,1),"max_score":round(max_s,1),"pct":pct,"topic_breakdown":tbd,"per_question":pqs}
+
+def save_session(uid,competition,level,difficulty,questions,answers,result,duration) -> str:
+    data = {
+        "competition":competition,"level":level,"difficulty":difficulty,
+        "timestamp_start":datetime.now(timezone.utc),"duration_sec":duration,
+        "total_questions":len(questions),"raw_score":result["raw_score"],
+        "max_score":result["max_score"],"pct":result["pct"],
+        "topic_breakdown":result["topic_breakdown"],
+        "answers":{q["id"]:{"chosen":answers.get(q["id"]),"correct":q.get("correct_answer"),
+                             "is_correct":pq["correct"],"time_sec":answers.get(f"{q['id']}__time",0),
+                             "topic":q.get("topic","Other")} for q,pq in zip(questions,result["per_question"])},
+    }
+    _,ref = db.collection("users").document(uid).collection("exam_sessions").add(data)
+    return ref.id
+
+# ══════════════════════════════════════════════
+# Charts
+# ══════════════════════════════════════════════
+def radar_chart(tbd) -> go.Figure:
+    topics = list(tbd.keys())
+    scores = [round(v["correct"]/v["total"]*100) if v["total"]>0 else 0 for v in tbd.values()]
+    fig = go.Figure(go.Scatterpolar(
+        r=scores+[scores[0]], theta=topics+[topics[0]], fill="toself",
+        fillcolor="rgba(74,124,247,0.12)", line=dict(color="#4A7CF7",width=2), marker=dict(size=5,color="#4A7CF7")))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True,range=[0,100],ticksuffix="%",tickfont=dict(size=10,color="#8898CC"),gridcolor="rgba(200,216,255,0.4)"),
+                   angularaxis=dict(tickfont=dict(size=11,color="#1B2B6B"),gridcolor="rgba(200,216,255,0.4)"),bgcolor="rgba(0,0,0,0)"),
+        showlegend=False, margin=dict(l=50,r=50,t=40,b=40),
+        paper_bgcolor="rgba(0,0,0,0)", height=300)
+    return fig
+
+def sw(tbd):
+    sc = {k:round(v["correct"]/v["total"]*100) for k,v in tbd.items() if v["total"]>0}
+    if not sc: return "—","—"
+    best=max(sc,key=sc.get); worst=min(sc,key=sc.get)
+    return f"{best} ({sc[best]}%) — consistent accuracy", f"{worst} ({sc[worst]}%) — review recommended"
+
+# ══════════════════════════════════════════════
+# AI Performance Analysis
+# ══════════════════════════════════════════════
+
+def generate_pdf_report(name:str, sessions:list) -> bytes:
+    """Generate a simple HTML→PDF-style report as HTML bytes for download."""
+    rows = ""
+    for s in sessions:
+        ts  = s.get("timestamp_start")
+        dt  = ts.strftime("%d %b %Y") if ts else "—"
+        tbd = s.get("topic_breakdown",{})
+        topic_str = " · ".join(
+            f"{t}: {round(v['correct']/v['total']*100)}%"
+            for t,v in tbd.items() if v.get("total",0)>0
+        )
+        color = "#22C55E" if s.get("pct",0)>=70 else ("#EAB308" if s.get("pct",0)>=50 else "#EF4444")
+        rows += f"""
+        <tr>
+          <td>{dt}</td>
+          <td><strong>{s.get("competition","")}</strong> · {s.get("level","")}</td>
+          <td>{s.get("difficulty","").capitalize()}</td>
+          <td style="text-align:center;font-weight:600;">{s.get("raw_score","")} / {s.get("max_score","")}</td>
+          <td style="text-align:center;font-weight:700;color:{color};">{s.get("pct","")}%</td>
+          <td style="font-size:11px;color:#5060A0;">{topic_str}</td>
+        </tr>"""
+
+    total_sessions = len(sessions)
+    avg_pct = round(sum(s.get("pct",0) for s in sessions)/total_sessions,1) if sessions else 0
+    best    = max(sessions, key=lambda s:s.get("pct",0)) if sessions else {}
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body{{font-family:'Segoe UI',Arial,sans-serif;color:#1B2B6B;margin:0;padding:0;background:#F8F9FF;}}
+  .header{{background:#1B2B6B;color:#fff;padding:32px 48px;}}
+  .header h1{{margin:0;font-size:28px;font-weight:300;font-style:italic;}}
+  .header p{{margin:6px 0 0;font-size:12px;opacity:.55;letter-spacing:.1em;text-transform:uppercase;}}
+  .body{{padding:36px 48px;}}
+  .student{{font-size:22px;font-weight:600;margin-bottom:4px;}}
+  .meta{{font-size:13px;color:#8898CC;margin-bottom:28px;}}
+  .summary{{display:flex;gap:20px;margin-bottom:32px;}}
+  .card{{background:#fff;border:1.5px solid #E8ECF8;border-radius:12px;padding:16px 20px;flex:1;}}
+  .card-label{{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#8898CC;margin-bottom:4px;}}
+  .card-val{{font-size:26px;font-weight:700;color:#1B2B6B;}}
+  table{{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(27,43,107,.06);}}
+  th{{background:#1B2B6B;color:#fff;padding:12px 16px;font-size:12px;text-align:left;font-weight:500;letter-spacing:.05em;}}
+  td{{padding:11px 16px;font-size:13px;border-bottom:1px solid #F3F5FB;}}
+  tr:last-child td{{border-bottom:none;}}
+  tr:hover td{{background:#F8F9FF;}}
+  .footer{{background:#1B2B6B;color:rgba(255,255,255,.4);padding:16px 48px;font-size:11px;margin-top:0;}}
+</style>
+</head><body>
+<div class="header">
+  <h1>MathComp · Student Report</h1>
+  <p>Math Mission Thailand · Generated {datetime.now().strftime("%d %b %Y %H:%M")}</p>
+</div>
+<div class="body">
+  <div class="student">{name}</div>
+  <div class="meta">Personal Performance Report · All Sessions</div>
+  <div class="summary">
+    <div class="card"><div class="card-label">Total Sessions</div><div class="card-val">{total_sessions}</div></div>
+    <div class="card"><div class="card-label">Average Accuracy</div><div class="card-val">{avg_pct}%</div></div>
+    <div class="card"><div class="card-label">Best Score</div><div class="card-val">{best.get("pct","—")}%</div></div>
+    <div class="card"><div class="card-label">Best Competition</div><div class="card-val" style="font-size:14px;">{best.get("competition","—")}</div></div>
+  </div>
+  <table>
+    <tr><th>Date</th><th>Competition</th><th>Difficulty</th><th style="text-align:center;">Score</th><th style="text-align:center;">Accuracy</th><th>Topic Breakdown</th></tr>
+    {rows if rows else '<tr><td colspan="6" style="text-align:center;padding:24px;color:#8898CC;">No sessions yet</td></tr>'}
+  </table>
+</div>
+<div class="footer">© Math Mission Thailand 2026 · MathComp Platform · Confidential</div>
+</body></html>"""
+    return html.encode("utf-8")
+
+
+def ai_analyze_performance(
+    name: str,
+    competition: str,
+    level: str,
+    result: dict,
+    questions: list,
+    duration: int,
+) -> str:
+    """
+    Call Claude API to generate a personalized performance analysis.
+    Returns the full analysis as a markdown string.
+    """
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return "_AI analysis unavailable — ANTHROPIC_API_KEY not set in secrets._"
+
+    # Build topic summary
+    tbd   = result["topic_breakdown"]
+    topic_lines = []
+    for topic, v in tbd.items():
+        pct = round(v["correct"] / v["total"] * 100) if v["total"] > 0 else 0
+        topic_lines.append(f"  - {topic}: {v['correct']}/{v['total']} correct ({pct}%)")
+    topic_summary = "\n".join(topic_lines)
+
+    # Build per-question detail (wrong answers only, to keep prompt short)
+    wrong_qs = []
+    for i, (q, pq) in enumerate(zip(questions, result["per_question"]), 1):
+        if not pq["correct"] and pq["chosen"] is not None:
+            wrong_qs.append(
+                f"  Q{i} [{q.get('topic','?')}]: chose {pq['chosen']}, correct {pq['right_answer']}"
+                + (f' — "{q.get("question_text","")[:80]}..."' if q.get("question_text") else "")
+            )
+    wrong_summary = "\n".join(wrong_qs[:15]) if wrong_qs else "  None — all attempted questions were correct."
+
+    blank_c  = sum(1 for pq in result["per_question"] if pq["chosen"] is None)
+    correct_c = sum(1 for pq in result["per_question"] if pq["correct"])
+    wrong_c   = sum(1 for pq in result["per_question"] if not pq["correct"] and pq["chosen"] is not None)
+
+    prompt = f"""You are an expert mathematics coach specializing in competition mathematics.
+Analyze the following student exam result and provide a detailed, personalized, encouraging report.
+
+Student name: {name}
+Competition: {competition} — {level}
+Score: {result['raw_score']} / {result['max_score']} ({result['pct']}%)
+Time taken: {duration//60} min {duration%60} sec
+Questions: {len(questions)} total — {correct_c} correct, {wrong_c} wrong, {blank_c} blank
+
+Topic breakdown:
+{topic_summary}
+
+Wrong answers (first 15):
+{wrong_summary}
+
+Write a structured analysis in markdown with these sections:
+
+## 🏆 Overall Performance
+A 2-3 sentence summary of how the student did, mentioning their score and time.
+
+## 💪 Strengths
+2-3 specific strengths based on topics they did well in. Be specific and encouraging.
+
+## 📈 Areas for Improvement
+2-3 specific topics or skills to work on. For each one, give a concrete study tip or type of problem to practice.
+
+## 🎯 Recommended Next Steps
+3 actionable steps the student should take before their next exam. Be specific (e.g., "Practice 10 AMC 8 geometry problems focusing on circle theorems").
+
+## ⭐ Encouragement
+1 short paragraph of genuine encouragement tailored to their result.
+
+Keep the tone warm, professional, and motivating. Use specific mathematical terms relevant to the topics. Total length: 300-400 words."""
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            json={
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        if resp.ok:
+            return resp.json()["content"][0]["text"]
+        else:
+            return f"_AI analysis failed (status {resp.status_code}). Please try again._"
+    except Exception as e:
+        return f"_AI analysis error: {e}_"
+
+
+# ══════════════════════════════════════════════
+# Page: Login
+# ══════════════════════════════════════════════
