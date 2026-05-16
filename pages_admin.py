@@ -4,6 +4,8 @@ Admin panel: competition settings, members, analytics, student history
 © Math Mission Thailand 2026
 """
 from shared import *
+import io
+import csv
 
 def page_admin():
     require_auth(); require_admin(); inject_css()
@@ -134,15 +136,6 @@ Respond ONLY with a JSON object with exactly these fields:
             return {}
 
         def ai_full_extract(img_b64:str, img_mime:str, competition:str, answer_type:str) -> dict:
-            """
-            Full extraction from a question image:
-            - question text (LaTeX)
-            - multiple choice options (if present)
-            - correct answer
-            - topic + difficulty
-            - worked solution
-            Returns a dict with all fields.
-            """
             n_choices = 4 if answer_type=="mc4" else (5 if answer_type=="mc5" else 0)
             choice_instruction = (
                 f"Extract the {n_choices} multiple choice options labelled A–{chr(64+n_choices)} exactly as written."
@@ -183,13 +176,11 @@ Rules:
                     return json.loads(raw.replace("```json","").replace("```","").strip())
                 except Exception as e:
                     st.warning(f"Could not parse AI response: {e}")
-                    # Return partial result with raw text
                     return {"question_text": raw, "choices":[], "correct_answer":"",
                             "topic":"Other","difficulty":"intermediate","solution_text":""}
             return {}
 
         def ai_generate_solution(q_text:str, choices:list, correct:str, competition:str):
-            """Generate a worked solution for a typed/existing question."""
             choices_str = ""
             if choices:
                 labels = [chr(65+i) for i in range(len(choices))]
@@ -205,7 +196,6 @@ Question:
 {q_text}{choices_str}
 
 Provide a thorough solution that a student can learn from."""
-
             return ai_call([{"role":"user","content":prompt}], max_tokens=1500) or ""
 
         def meta_fields(p="", q_text_for_ai="", img_b64_for_ai="", img_mime_for_ai=""):
@@ -237,7 +227,6 @@ Provide a thorough solution that a student can learn from."""
                         unsafe_allow_html=True)
 
             c3,c4,c5,c6 = st.columns(4)
-            # Use AI suggestion as default if available
             ai_topic = ai_result.get("topic","Algebra")
             ai_diff  = ai_result.get("difficulty","easy")
             topic_opts = TOPICS+["Other"]
@@ -272,7 +261,6 @@ Provide a thorough solution that a student can learn from."""
         # Method 1 — Type
         if method == "✏️  Type directly":
             st.markdown("#### Type question with LaTeX support")
-            st.caption("Use `$...$` for inline math and `$$...$$` for display math.")
             q_text_pre = st.session_state.get('t_qtext','')
             comp,level,topic,diff,year,atype = meta_fields("t_",q_text_for_ai=q_text_pre)
             q_text = st.text_area("Question text (LaTeX supported)", height=120, key="t_qtext")
@@ -281,7 +269,6 @@ Provide a thorough solution that a student can learn from."""
                 with st.expander("Preview"): st.markdown(q_text)
             choices,correct = ans_fields(atype,"t_")
 
-            # AI generate solution
             st.markdown("**Solution**")
             sc1,sc2 = st.columns([3,1])
             t_sol = sc1.text_area("Solution text / LaTeX (optional)", height=100, key="t_sol_text")
@@ -303,7 +290,7 @@ Provide a thorough solution that a student can learn from."""
                 else:
                     with st.spinner("Saving…"):
                         q_url = upload_img(q_img,f"questions/{datetime.now().timestamp()}_q.{q_img.name.split('.')[-1]}") if q_img else ""
-                        s_url = upload_img(sol_img,f"solutions/{datetime.now().timestamp()}_s.{sol_img.name.split('.')[-1]}") if sol_img else ""
+                        s_url = upload_img(t_sol_img,f"solutions/{datetime.now().timestamp()}_s.{t_sol_img.name.split('.')[-1]}") if t_sol_img else ""
                         final_sol = t_sol or st.session_state.pop("t_sol_generated","")  
                         save_question({"competition":comp,"level":level,"topic":topic,"difficulty":diff,"year":year,
                                        "answer_type":atype,"question_text":q_text,"question_image_url":q_url,
@@ -329,30 +316,22 @@ Provide a thorough solution that a student can learn from."""
                                        "choices":choices,"correct_answer":correct,"solution_text":sol_text,"solution_image_url":s_url})
                     st.success("✅  Question saved!")
 
-        # Method 3 — AI-OCR (full extract: question + choices + solution)
+        # Method 3 — AI-OCR (full extract)
         elif method == "🤖  AI-OCR from image":
             st.markdown("#### AI reads image — extracts question, choices, correct answer & solution")
-            st.caption("Claude reads the full image and fills in all fields automatically. Review and edit before saving.")
-
             comp,level,topic,diff,year,atype = meta_fields("ai_")
 
             q_img = st.file_uploader("Question image", type=["png","jpg","jpeg"], key="ai_qimg")
 
-            # ── Clear stale results when a new image is uploaded ──
             if q_img:
-                # Track filename+size to detect a new upload
                 img_sig = f"{q_img.name}_{q_img.size}"
                 if st.session_state.get("ai_img_sig") != img_sig:
-                    # New image — clear all previous extraction results
-                    for k in ("ai_full","ai_ocr_result","ai_topic_override",
-                              "ai_diff_override","ai_img_sig"):
+                    for k in ("ai_full","ai_ocr_result","ai_topic_override","ai_diff_override","ai_img_sig"):
                         st.session_state.pop(k, None)
                     st.session_state["ai_img_sig"] = img_sig
                 st.image(q_img, caption=f"Uploaded: {q_img.name}", use_container_width=True)
             else:
-                # No image — also clear stale data
-                for k in ("ai_full","ai_ocr_result","ai_topic_override",
-                          "ai_diff_override","ai_img_sig"):
+                for k in ("ai_full","ai_ocr_result","ai_topic_override","ai_diff_override","ai_img_sig"):
                     st.session_state.pop(k, None)
 
             if q_img and st.button("🤖  Full AI Extract (question + choices + solution)", type="primary", key="ai_ocr"):
@@ -372,7 +351,6 @@ Provide a thorough solution that a student can learn from."""
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-            # Pull extracted values (or empty defaults)
             extracted = st.session_state.get("ai_full", {})
             if extracted:
                 st.markdown("""
@@ -382,15 +360,12 @@ Provide a thorough solution that a student can learn from."""
                 Review each field carefully — edit anything that needs correction before saving.
                 </div>""", unsafe_allow_html=True)
 
-            # ── Editable fields pre-filled by AI ──
-            q_text = st.text_area(
-                "Question text (LaTeX)",
+            q_text = st.text_area("Question text (LaTeX)",
                 value=extracted.get("question_text", st.session_state.get("ai_ocr_result","")),
                 height=140, key="ai_qtext")
             if q_text:
                 with st.expander("Preview question"): st.markdown(q_text)
 
-            # Override topic/diff from AI extraction
             if extracted.get("topic") and extracted["topic"] in TOPICS+["Other"]:
                 st.session_state["ai_topic_override"] = extracted["topic"]
             if extracted.get("difficulty") and extracted["difficulty"] in ["easy","intermediate","advanced"]:
@@ -406,10 +381,7 @@ Provide a thorough solution that a student can learn from."""
             tc1,tc2 = st.columns(2)
             topic_final = tc1.selectbox("Topic",    topic_opts, index=ti, key="ai_topic_sel")
             diff_final  = tc2.selectbox("Difficulty",diff_opts, index=di, key="ai_diff_sel")
-            if extracted.get("topic_reason") or extracted.get("difficulty_reason"):
-                st.caption(f"🤖 {extracted.get('topic_reason','')} · {extracted.get('difficulty_reason','')}")
 
-            # ── Answer choices from AI ──
             ai_choices  = extracted.get("choices", [])
             ai_correct  = str(extracted.get("correct_answer",""))
             choices, correct = [], ""
@@ -427,17 +399,12 @@ Provide a thorough solution that a student can learn from."""
             else:
                 correct = st.text_input("Correct answer (number)", value=ai_correct, key="ai_correct_num")
 
-            # ── Solution from AI ──
             st.markdown("**Solution** (AI-generated — edit if needed)")
-            sol_text = st.text_area(
-                "Solution text (LaTeX)",
-                value=extracted.get("solution_text",""),
-                height=180, key="ai_sol_text")
+            sol_text = st.text_area("Solution text (LaTeX)", value=extracted.get("solution_text",""), height=180, key="ai_sol_text")
             if sol_text:
                 with st.expander("Preview solution"): st.markdown(sol_text)
             sol_img = st.file_uploader("Solution image (optional)", type=["png","jpg","jpeg"], key="ai_sol_img")
 
-            # ── Generate solution separately if needed ──
             if q_text and st.button("🔄  Re-generate solution only", key="ai_regen_sol"):
                 with st.spinner("Claude is writing a solution…"):
                     new_sol = ai_generate_solution(q_text, choices, correct, comp)
@@ -477,7 +444,6 @@ Provide a thorough solution that a student can learn from."""
             atype  = st.selectbox("Answer type (all)",["mc5","mc4","integer","decimal"],key="pdf_atype")
             pdf_file = st.file_uploader("Upload PDF", type=["pdf"], key="pdf_upload")
 
-            # Clear stale results when a new PDF is uploaded
             if pdf_file:
                 pdf_sig = f"{pdf_file.name}_{pdf_file.size}"
                 if st.session_state.get("pdf_sig") != pdf_sig:
@@ -552,14 +518,10 @@ No markdown, no explanation — ONLY the JSON array."""
                     with st.expander(
                         f"Q{i+1} {ch_icon} [{q.get('difficulty','?')}] [{q.get('topic','?')}] {sol_icon} — {qt_preview}…"
                     ):
-                        # Question text
-                        pdf_qs[i]["question_text"] = st.text_area(
-                            "Question text (LaTeX)", value=q.get("question_text",""),
-                            height=100, key=f"pdf_qt_{i}")
+                        pdf_qs[i]["question_text"] = st.text_area("Question text (LaTeX)", value=q.get("question_text",""), height=100, key=f"pdf_qt_{i}")
                         with st.expander("Preview question"):
                             st.markdown(pdf_qs[i]["question_text"])
 
-                        # Topic + difficulty
                         pc1,pc2 = st.columns(2)
                         t_opts = TOPICS+["Other"]
                         d_opts = ["easy","intermediate","advanced"]
@@ -570,47 +532,29 @@ No markdown, no explanation — ONLY the JSON array."""
                             index=d_opts.index(q.get("difficulty","intermediate")) if q.get("difficulty") in d_opts else 1,
                             key=f"pdf_df_{i}")
 
-                        # Choices
                         if atype in ("mc4","mc5"):
                             n = 4 if atype=="mc4" else 5
                             existing = q.get("choices",[""]*n)
                             st.markdown("**Answer choices**")
                             cols = st.columns(n); new_ch = []
                             for j in range(n):
-                                new_ch.append(cols[j].text_input(
-                                    chr(65+j),
-                                    value=existing[j] if j < len(existing) else "",
-                                    key=f"pdf_ch_{i}_{j}"))
+                                new_ch.append(cols[j].text_input(chr(65+j), value=existing[j] if j < len(existing) else "", key=f"pdf_ch_{i}_{j}"))
                             pdf_qs[i]["choices"] = new_ch
                             labels = [chr(65+j) for j in range(n)]
                             ca = str(q.get("correct_answer","A")).upper()
-                            pdf_qs[i]["correct_answer"] = st.selectbox(
-                                "Correct answer", labels,
-                                index=labels.index(ca) if ca in labels else 0,
-                                key=f"pdf_ca_{i}")
+                            pdf_qs[i]["correct_answer"] = st.selectbox("Correct answer", labels, index=labels.index(ca) if ca in labels else 0, key=f"pdf_ca_{i}")
                         else:
-                            pdf_qs[i]["correct_answer"] = st.text_input(
-                                "Correct answer", value=str(q.get("correct_answer","")),
-                                key=f"pdf_ca_{i}")
+                            pdf_qs[i]["correct_answer"] = st.text_input("Correct answer", value=str(q.get("correct_answer","")), key=f"pdf_ca_{i}")
 
-                        # Solution
                         st.markdown("**Solution** (AI-generated)")
-                        pdf_qs[i]["solution_text"] = st.text_area(
-                            "Solution (LaTeX)", value=q.get("solution_text",""),
-                            height=150, key=f"pdf_sol_{i}")
+                        pdf_qs[i]["solution_text"] = st.text_area("Solution (LaTeX)", value=q.get("solution_text",""), height=150, key=f"pdf_sol_{i}")
                         if pdf_qs[i]["solution_text"]:
                             with st.expander("Preview solution"):
                                 st.markdown(pdf_qs[i]["solution_text"])
 
-                        # Re-generate solution for this question
                         if st.button(f"🔄  Re-generate solution for Q{i+1}", key=f"pdf_regen_{i}"):
                             with st.spinner("Generating solution…"):
-                                new_sol = ai_generate_solution(
-                                    pdf_qs[i]["question_text"],
-                                    pdf_qs[i].get("choices",[]),
-                                    str(pdf_qs[i].get("correct_answer","")),
-                                    comp
-                                )
+                                new_sol = ai_generate_solution(pdf_qs[i]["question_text"], pdf_qs[i].get("choices",[]), str(pdf_qs[i].get("correct_answer","")), comp)
                                 if new_sol:
                                     pdf_qs[i]["solution_text"] = new_sol
                                     st.session_state["pdf_questions"] = pdf_qs
@@ -619,14 +563,11 @@ No markdown, no explanation — ONLY the JSON array."""
                 st.session_state["pdf_questions"] = pdf_qs
                 st.divider()
 
-                # Summary before saving
                 n_sol = sum(1 for q in pdf_qs if q.get("solution_text","").strip())
                 n_ch  = sum(1 for q in pdf_qs if q.get("choices"))
-                st.info(f"📊  Ready to save: **{len(pdf_qs)}** questions · "
-                        f"**{n_ch}** with choices · **{n_sol}** with solutions")
+                st.info(f"📊  Ready to save: **{len(pdf_qs)}** questions · **{n_ch}** with choices · **{n_sol}** with solutions")
 
-                if st.button(f"💾  Save all {len(pdf_qs)} questions to Firestore",
-                             type="primary", key="pdf_save"):
+                if st.button(f"💾  Save all {len(pdf_qs)} questions to Firestore", type="primary", key="pdf_save"):
                     with st.spinner(f"Saving {len(pdf_qs)} questions…"):
                         for q in pdf_qs:
                             save_question({
@@ -673,46 +614,35 @@ No markdown, no explanation — ONLY the JSON array."""
                        f"[{d.get('difficulty','')}] "
                        f"[{d.get('topic','')}] — {qt}…")
                 with st.expander(hdr):
-                    # ── Preview ──────────────────────────────
                     if d.get("question_image_url"):
                         st.image(d["question_image_url"], use_container_width=True)
 
                     ec1, ec2 = st.columns(2)
-                    # ── Editable fields ───────────────────────
                     new_comp  = ec1.selectbox("Competition", list(COMPETITIONS.keys()),
-                        index=list(COMPETITIONS.keys()).index(d.get("competition","AMC 8"))
-                              if d.get("competition") in COMPETITIONS else 0,
+                        index=list(COMPETITIONS.keys()).index(d.get("competition","AMC 8")) if d.get("competition") in COMPETITIONS else 0,
                         key=f"e_comp_{doc_id}")
                     new_level = ec2.selectbox("Level", COMPETITIONS[new_comp]["levels"],
-                        index=COMPETITIONS[new_comp]["levels"].index(d.get("level",""))
-                              if d.get("level","") in COMPETITIONS[new_comp]["levels"] else 0,
+                        index=COMPETITIONS[new_comp]["levels"].index(d.get("level","")) if d.get("level","") in COMPETITIONS[new_comp]["levels"] else 0,
                         key=f"e_level_{doc_id}")
 
                     ec3,ec4,ec5,ec6 = st.columns(4)
                     topic_opts = TOPICS+["Other"]
                     diff_opts  = ["easy","intermediate","advanced"]
                     new_topic = ec3.selectbox("Topic", topic_opts,
-                        index=topic_opts.index(d.get("topic","Other"))
-                              if d.get("topic") in topic_opts else 0,
+                        index=topic_opts.index(d.get("topic","Other")) if d.get("topic") in topic_opts else 0,
                         key=f"e_topic_{doc_id}")
                     new_diff  = ec4.selectbox("Difficulty", diff_opts,
-                        index=diff_opts.index(d.get("difficulty","easy"))
-                              if d.get("difficulty") in diff_opts else 0,
+                        index=diff_opts.index(d.get("difficulty","easy")) if d.get("difficulty") in diff_opts else 0,
                         key=f"e_diff_{doc_id}")
                     new_year  = ec5.number_input("Year", 2000, 2030,
-                        value=int(d.get("year", datetime.now().year)),
-                        key=f"e_year_{doc_id}")
+                        value=int(d.get("year", datetime.now().year)), key=f"e_year_{doc_id}")
                     atype_opts = ["mc4","mc5","integer","decimal"]
                     new_atype = ec6.selectbox("Answer type", atype_opts,
-                        index=atype_opts.index(d.get("answer_type","mc4"))
-                              if d.get("answer_type") in atype_opts else 0,
+                        index=atype_opts.index(d.get("answer_type","mc4")) if d.get("answer_type") in atype_opts else 0,
                         key=f"e_atype_{doc_id}")
 
-                    new_qtext = st.text_area("Question text (LaTeX)",
-                        value=d.get("question_text",""), height=100,
-                        key=f"e_qtext_{doc_id}")
+                    new_qtext = st.text_area("Question text (LaTeX)", value=d.get("question_text",""), height=100, key=f"e_qtext_{doc_id}")
 
-                    # Choices
                     new_choices = d.get("choices",[])
                     new_correct = d.get("correct_answer","")
                     if new_atype in ("mc4","mc5"):
@@ -722,32 +652,22 @@ No markdown, no explanation — ONLY the JSON array."""
                         new_choices = []
                         for i in range(n):
                             existing_val = d.get("choices",[""]*(n))[i] if i < len(d.get("choices",[])) else ""
-                            new_choices.append(ch_cols[i].text_input(
-                                chr(65+i), value=existing_val, key=f"e_ch_{doc_id}_{i}"))
-                        new_correct = st.selectbox("Correct answer",
-                            [chr(65+i) for i in range(n)],
-                            index=[chr(65+i) for i in range(n)].index(d.get("correct_answer","A"))
-                                  if d.get("correct_answer","A") in [chr(65+i) for i in range(n)] else 0,
+                            new_choices.append(ch_cols[i].text_input(chr(65+i), value=existing_val, key=f"e_ch_{doc_id}_{i}"))
+                        new_correct = st.selectbox("Correct answer", [chr(65+i) for i in range(n)],
+                            index=[chr(65+i) for i in range(n)].index(d.get("correct_answer","A")) if d.get("correct_answer","A") in [chr(65+i) for i in range(n)] else 0,
                             key=f"e_correct_{doc_id}")
                     else:
-                        new_correct = st.text_input("Correct answer",
-                            value=str(d.get("correct_answer","")),
-                            key=f"e_correct_{doc_id}")
+                        new_correct = st.text_input("Correct answer", value=str(d.get("correct_answer","")), key=f"e_correct_{doc_id}")
 
                     st.markdown("**Solution**")
                     esl1, esl2 = st.columns(2)
-                    new_sol = esl1.text_area("Solution text / LaTeX",
-                        value=d.get("solution_text",""), height=80,
-                        key=f"e_sol_{doc_id}")
-                    new_sol_img_file = esl2.file_uploader(
-                        "Replace solution image",
-                        type=["png","jpg","jpeg"], key=f"e_sol_img_{doc_id}")
+                    new_sol = esl1.text_area("Solution text / LaTeX", value=d.get("solution_text",""), height=80, key=f"e_sol_{doc_id}")
+                    new_sol_img_file = esl2.file_uploader("Replace solution image", type=["png","jpg","jpeg"], key=f"e_sol_img_{doc_id}")
                     if d.get("solution_image_url") and not new_sol_img_file:
                         st.image(d["solution_image_url"], caption="Current solution image", width=200)
                     elif new_sol_img_file:
                         st.image(new_sol_img_file, caption="New solution image preview", width=200)
 
-                    # ── AI re-assess button ───────────────────
                     ai_key = f"e_ai_{doc_id}"
                     if st.button("🤖  AI re-assess difficulty & topic", key=f"e_ai_btn_{doc_id}"):
                         with st.spinner("Claude is re-analysing…"):
@@ -757,27 +677,17 @@ No markdown, no explanation — ONLY the JSON array."""
                                 st.rerun()
                     if ai_key in st.session_state:
                         ar = st.session_state[ai_key]
-                        st.info(
-                            f"🤖 AI suggests — **Topic: {ar.get('topic','?')}** · "
-                            f"**Difficulty: {ar.get('difficulty','?')}** · "
-                            f"{ar.get('topic_reason','')} · {ar.get('difficulty_reason','')}"
-                        )
+                        st.info(f"🤖 AI suggests — **Topic: {ar.get('topic','?')}** · **Difficulty: {ar.get('difficulty','?')}** · {ar.get('topic_reason','')} · {ar.get('difficulty_reason','')}")
 
-                    # ── Save / Delete buttons ─────────────────
                     sb1, sb2 = st.columns(2)
-                    if sb1.button("💾  Save changes", type="primary",
-                                  key=f"save_{doc_id}", use_container_width=True):
-                        # Use AI suggestion if available
+                    if sb1.button("💾  Save changes", type="primary", key=f"save_{doc_id}", use_container_width=True):
                         ar = st.session_state.get(ai_key, {})
                         final_topic = ar.get("topic", new_topic) if ar else new_topic
                         final_diff  = ar.get("difficulty", new_diff) if ar else new_diff
                         ts_now = datetime.now().timestamp()
                         new_sol_url = d.get("solution_image_url","")
                         if new_sol_img_file:
-                            new_sol_url = upload_img(
-                                new_sol_img_file,
-                                f"solutions/{ts_now}_s.{new_sol_img_file.name.split('.')[-1]}"
-                            )
+                            new_sol_url = upload_img(new_sol_img_file, f"solutions/{ts_now}_s.{new_sol_img_file.name.split('.')[-1]}")
                         updates = {
                             "competition":        new_comp,
                             "level":              new_level,
@@ -792,7 +702,6 @@ No markdown, no explanation — ONLY the JSON array."""
                             "solution_image_url": new_sol_url,
                         }
                         db.collection("questions").document(doc_id).update(updates)
-                        # Refresh cache
                         idx = next((i for i,(did,_) in enumerate(qb_docs) if did==doc_id), None)
                         if idx is not None:
                             st.session_state["qb_docs"][idx] = (doc_id, {**d, **updates})
@@ -841,12 +750,9 @@ No markdown, no explanation — ONLY the JSON array."""
                 c3,c4 = st.columns(2)
                 np = c3.text_input("Password",type="password"); nr = c4.selectbox("Role",["student","admin"])
                 sub_add = st.form_submit_button("Create account",type="primary",use_container_width=True)
-            # Email settings for Add Member
             with st.expander("⚙️  Email notification settings"):
                 send_email_toggle = st.toggle("Send welcome email to new member", value=True, key="add_send_email")
-                app_url_add = st.text_input("App URL (for login link in email)",
-                    value=st.secrets.get("APP_URL","https://share.streamlit.io"),
-                    key="add_app_url")
+                app_url_add = st.text_input("App URL (for login link in email)", value=st.secrets.get("APP_URL","https://share.streamlit.io"), key="add_app_url")
 
             if sub_add:
                 if not nm or not ne or not np: st.error("All fields required.")
@@ -859,36 +765,22 @@ No markdown, no explanation — ONLY the JSON array."""
                             "created_at":datetime.now(timezone.utc)
                         })
                         st.success(f"✅  Account created for **{nm}** ({ne}) as **{nr}**")
-
-                        # Send welcome email
                         if send_email_toggle:
                             with st.spinner(f"Sending welcome email to {ne}…"):
                                 ok, msg = send_welcome_email(ne, nm, np, nr, app_url_add)
-                            if ok:
-                                st.success(f"📧  Welcome email sent to **{ne}**")
-                            else:
-                                st.warning(f"⚠️  Account created but email failed: {msg}")
+                            if ok: st.success(f"📧  Welcome email sent to **{ne}**")
+                            else: st.warning(f"⚠️  Account created but email failed: {msg}")
                     except Exception as e: st.error(f"Error: {e}")
 
         with mem_csv:
             st.markdown("#### Bulk create accounts from CSV")
             st.caption("Upload a CSV file with columns: **display_name, email, password, role**")
-            st.markdown("""
-**CSV format example:**
-```
-display_name,email,password,role
-Napat Suwan,napat@example.com,Pass1234!,student
-Mint Charoenpol,mint@example.com,Pass5678!,student
-Admin2,admin2@example.com,AdminPass!,admin
-```
-""")
             csv_template = "display_name,email,password,role\nNapat Suwan,napat@example.com,Pass1234!,student\nMint Charoenpol,mint@example.com,Pass5678!,student"
             st.download_button("⬇️  Download CSV template", csv_template.encode(), "members_template.csv", "text/csv")
             st.divider()
             csv_file = st.file_uploader("Upload members CSV", type=["csv"], key="bulk_csv")
             if csv_file:
-                import io as _io
-                import csv as _csv
+                import io as _io, csv as _csv
                 rows = list(_csv.DictReader(_io.StringIO(csv_file.read().decode("utf-8-sig"))))
                 st.markdown(f"**{len(rows)} accounts found in CSV — preview:**")
                 for i,r in enumerate(rows[:5]):
@@ -897,12 +789,7 @@ Admin2,admin2@example.com,AdminPass!,admin
                 st.divider()
                 with st.expander("⚙️  Email notification settings"):
                     bulk_send_email = st.toggle("Send welcome email to each member", value=True, key="bulk_send_email")
-                    bulk_app_url    = st.text_input("App URL (for login link in email)",
-                        value=st.secrets.get("APP_URL","https://share.streamlit.io"),
-                        key="bulk_app_url")
-                    if bulk_send_email:
-                        st.info("📧  Each member will receive a welcome email with their login credentials.")
-
+                    bulk_app_url    = st.text_input("App URL (for login link in email)", value=st.secrets.get("APP_URL","https://share.streamlit.io"), key="bulk_app_url")
                 if st.button(f"🚀  Create {len(rows)} accounts", type="primary", key="bulk_create"):
                     from firebase_admin import auth as _fb_auth
                     success, failed = 0, []
@@ -917,13 +804,10 @@ Admin2,admin2@example.com,AdminPass!,admin
                         try:
                             user = _fb_auth.create_user(email=email, password=pwd, display_name=name)
                             db.collection("users").document(user.uid).set({
-                                "display_name": name, "email": email,
-                                "role": role, "created_at": datetime.now(timezone.utc)
+                                "display_name": name, "email": email, "role": role, "created_at": datetime.now(timezone.utc)
                             })
                             success += 1
-                            # Send welcome email per account
-                            if bulk_send_email:
-                                send_welcome_email(email, name, pwd, role, bulk_app_url)
+                            if bulk_send_email: send_welcome_email(email, name, pwd, role, bulk_app_url)
                         except Exception as e:
                             failed.append(f"{email} — {e}")
                         prog.progress((i+1)/len(rows), text=f"Creating accounts… {i+1}/{len(rows)}")
@@ -932,14 +816,12 @@ Admin2,admin2@example.com,AdminPass!,admin
                     if failed:
                         st.warning(f"⚠️  {len(failed)} failed:")
                         for f in failed: st.caption(f"  • {f}")
-                    # Generate summary CSV
                     summary = "display_name,email,role,status\n"
                     for r in rows:
                         email = r.get("email","")
                         status = "failed" if any(email in f for f in failed) else "created"
                         summary += f"{r.get('display_name','')},{email},{r.get('role','student')},{status}\n"
-                    st.download_button("⬇️  Download result summary", summary.encode(),
-                                       f"bulk_create_result_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv")
+                    st.download_button("⬇️  Download result summary", summary.encode(), f"bulk_create_result_{datetime.now().strftime('%Y%m%d_%H%M')}.csv", "text/csv")
 
         with mem3:
             st.markdown("#### Export student data")
@@ -1037,12 +919,10 @@ Admin2,admin2@example.com,AdminPass!,admin
                         })
                         _invalidate_custom_cache()  # clear cache
                         st.success(f"✅  **{cn_name}** added to catalog!")
-                        st.info(f"Students can now select it from the exam dropdown. "
-                                f"Add questions via the **🔗 Add Questions** tab.")
+                        st.info(f"Students can now select it from the exam dropdown. Add questions via the **🔗 Add Questions** tab.")
                     except Exception as e:
                         st.error(f"Error: {e}")
 
-            # Show pre-built suggestions
             st.divider()
             st.markdown("#### 💡 Quick-add popular competitions")
             SUGGESTIONS = [
@@ -1069,11 +949,10 @@ Admin2,admin2@example.com,AdminPass!,admin
                 with cols[i%3]:
                     already = code in existing_codes
                     btn_label = f"✅ {name}" if already else f"➕ {name}"
-                    if st.button(btn_label, key=f"qa_{code}",
-                                 use_container_width=True, disabled=already):
+                    if st.button(btn_label, key=f"qa_{code}", use_container_width=True, disabled=already):
                         try:
                             db.collection("competition_catalog").document(code).set({
-                                "name":cn_name if False else name,"code":code,"description":desc,
+                                "name":name,"code":code,"description":desc,
                                 "levels":levels,"secs_per_q":spq,
                                 "scoring":{"correct":sc,"wrong":sw,"blank":0},
                                 "created_at":datetime.now(timezone.utc),
@@ -1090,7 +969,6 @@ Admin2,admin2@example.com,AdminPass!,admin
             all_comps_full = get_all_competitions(include_disabled=True)
             disabled_set   = load_disabled_competitions()
 
-            # Group: built-in vs custom
             builtin_names = list(COMPETITIONS_BUILTIN.keys())
             custom_names  = [k for k in all_comps_full if k not in builtin_names]
 
@@ -1099,23 +977,18 @@ Admin2,admin2@example.com,AdminPass!,admin
                 c1, c2, c3 = st.columns([4, 2, 1])
                 c1.markdown(f"**{name}**")
                 c2.caption(info.get("description",""))
-                new_val = c3.toggle(
-                    "##tog", value=is_enabled,
-                    key=f"tog_{name.replace(' ','_').replace('(','').replace(')','')}"
-                )
+                new_val = c3.toggle("##tog", value=is_enabled, key=f"tog_{name.replace(' ','_').replace('(','').replace(')','')}")
                 if new_val != is_enabled:
                     set_competition_enabled(name, new_val)
                     st.rerun()
 
             st.markdown("**Built-in competitions**")
-            for name in builtin_names:
-                comp_toggle_row(name, COMPETITIONS_BUILTIN[name])
+            for name in builtin_names: comp_toggle_row(name, COMPETITIONS_BUILTIN[name])
 
             if custom_names:
                 st.divider()
                 st.markdown("**Custom competitions**")
-                for name in custom_names:
-                    comp_toggle_row(name, all_comps_full[name])
+                for name in custom_names: comp_toggle_row(name, all_comps_full[name])
 
             st.divider()
             enabled_count  = len(all_comps_full) - len(disabled_set)
@@ -1123,8 +996,7 @@ Admin2,admin2@example.com,AdminPass!,admin
             c1, c2 = st.columns(2)
             c1.metric("Enabled",  enabled_count)
             c2.metric("Disabled", disabled_count)
-            if disabled_set:
-                st.caption(f"Disabled: {', '.join(sorted(disabled_set))}")
+            if disabled_set: st.caption(f"Disabled: {', '.join(sorted(disabled_set))}")
 
         # ── ct3: Edit / Delete ────────────────────
         with ct3:
@@ -1140,14 +1012,11 @@ Admin2,admin2@example.com,AdminPass!,admin
                             ef1,ef2 = st.columns(2)
                             e_name = ef1.text_input("Name",  value=d.get("name",""),  key=f"en_{doc.id}")
                             e_desc = ef2.text_input("Desc",  value=d.get("description",""), key=f"ed_{doc.id}")
-                            e_levels = st.text_area("Levels (one per line)",
-                                value="\n".join(d.get("levels",[])), height=80, key=f"el_{doc.id}")
+                            e_levels = st.text_area("Levels (one per line)", value="\n".join(d.get("levels",[])), height=80, key=f"el_{doc.id}")
                             ef3,ef4,ef5 = st.columns(3)
                             e_spq = ef3.number_input("Sec/q", 10, 600, int(d.get("secs_per_q",120)), key=f"es_{doc.id}")
-                            e_sc  = ef4.number_input("Score correct", 0.0, 10.0,
-                                float(d.get("scoring",{}).get("correct",1)), key=f"esc_{doc.id}")
-                            e_sw  = ef5.number_input("Score wrong", -5.0, 0.0,
-                                float(d.get("scoring",{}).get("wrong",0)), key=f"esw_{doc.id}")
+                            e_sc  = ef4.number_input("Score correct", 0.0, 10.0, float(d.get("scoring",{}).get("correct",1)), key=f"esc_{doc.id}")
+                            e_sw  = ef5.number_input("Score wrong", -5.0, 0.0, float(d.get("scoring",{}).get("wrong",0)), key=f"esw_{doc.id}")
                             sb1,sb2 = st.columns(2)
                             if sb1.button("💾  Save", key=f"ecsave_{doc.id}", type="primary", use_container_width=True):
                                 lvls = [l.strip() for l in e_levels.splitlines() if l.strip()] or ["General"]
@@ -1169,14 +1038,12 @@ Admin2,admin2@example.com,AdminPass!,admin
         with ct4:
             st.markdown("#### Add questions to a competition")
             all_comps = get_all_competitions(include_disabled=True)
-
             aq_comp = st.selectbox("Select competition", list(get_all_competitions(include_disabled=True).keys()), key="aq_comp")
             aq_level = st.selectbox("Level", all_comps[aq_comp]["levels"], key="aq_level")
             st.divider()
 
             aq_tab1, aq_tab2 = st.tabs(["✏️  Add new question", "📥  Select from existing bank"])
 
-            # ── Add new question directly ─────────
             with aq_tab1:
                 st.caption("Write a new question and save it directly to this competition.")
                 aq_topic = st.selectbox("Topic", TOPICS+["Other"], key="aq_topic")
@@ -1189,7 +1056,6 @@ Admin2,admin2@example.com,AdminPass!,admin
                 if aq_text:
                     with st.expander("Preview"): st.markdown(aq_text)
 
-                # AI assess
                 if aq_text and st.button("🤖  AI assess difficulty & topic", key="aq_ai_btn"):
                     with st.spinner("Analysing…"):
                         ai_r = ai_assess_question(aq_text, "", "", aq_comp)
@@ -1202,16 +1068,13 @@ Admin2,admin2@example.com,AdminPass!,admin
                         st.session_state["aq_diff"]  = ar.get("difficulty", aq_diff)
                         st.session_state.pop("aq_ai",None); st.rerun()
 
-                # Choices
                 aq_choices = []; aq_correct = ""
                 if aq_atype in ("mc4","mc5"):
                     n = 4 if aq_atype=="mc4" else 5
                     st.markdown("**Answer choices**")
                     ch_cols = st.columns(n)
-                    for i in range(n):
-                        aq_choices.append(ch_cols[i].text_input(chr(65+i), key=f"aq_ch{i}"))
-                    aq_correct = st.selectbox("Correct answer",
-                        [chr(65+i) for i in range(n)], key="aq_correct_mc")
+                    for i in range(n): aq_choices.append(ch_cols[i].text_input(chr(65+i), key=f"aq_ch{i}"))
+                    aq_correct = st.selectbox("Correct answer", [chr(65+i) for i in range(n)], key="aq_correct_mc")
                 else:
                     aq_correct = st.text_input("Correct answer (number)", key="aq_correct_num")
 
@@ -1220,8 +1083,7 @@ Admin2,admin2@example.com,AdminPass!,admin
                 sc1, sc2 = st.columns(2)
                 aq_sol     = sc1.text_area("Solution text / LaTeX", height=80, key="aq_sol")
                 aq_sol_img = sc2.file_uploader("Solution image", type=["png","jpg","jpeg"], key="aq_sol_img")
-                if aq_sol_img:
-                    st.image(aq_sol_img, caption="Solution preview", use_container_width=True)
+                if aq_sol_img: st.image(aq_sol_img, caption="Solution preview", use_container_width=True)
 
                 if st.button("💾  Save question to this competition", type="primary", key="aq_save"):
                     if not aq_text and not aq_img:
@@ -1249,10 +1111,8 @@ Admin2,admin2@example.com,AdminPass!,admin
                             st.session_state.pop("aq_ai",None)
                         st.success(f"✅  Question saved to **{aq_comp} · {aq_level}**!")
 
-            # ── Select from existing bank ─────────
             with aq_tab2:
                 st.caption("Copy questions from the existing bank into this competition.")
-
                 src_comp  = st.selectbox("Source competition", list(get_all_competitions(include_disabled=True).keys()), key="src_comp")
                 src_topic = st.selectbox("Topic filter", ["All"]+TOPICS+["Other"], key="src_topic")
                 src_diff  = st.selectbox("Difficulty filter", ["All","easy","intermediate","advanced"], key="src_diff")
@@ -1264,8 +1124,7 @@ Admin2,admin2@example.com,AdminPass!,admin
                         if src_diff  != "All": ref = ref.where("difficulty","==",src_diff)
                         docs = list(ref.limit(100).stream())
                         st.session_state["src_docs"] = [(d.id, d.to_dict()) for d in docs]
-                    except Exception as e:
-                        st.error(f"Error: {e}")
+                    except Exception as e: st.error(f"Error: {e}")
 
                 src_docs = st.session_state.get("src_docs",[])
                 if src_docs:
@@ -1274,18 +1133,12 @@ Admin2,admin2@example.com,AdminPass!,admin
                     for did, d in src_docs:
                         qt = d.get("question_text","(image only)")[:70]
                         label = f"[{d.get('difficulty','')}] [{d.get('topic','')}] {qt}…"
-                        if st.checkbox(label, key=f"src_sel_{did}"):
-                            selected_ids.append((did, d))
+                        if st.checkbox(label, key=f"src_sel_{did}"): selected_ids.append((did, d))
 
                     if selected_ids:
                         st.markdown(f"**{len(selected_ids)} question(s) selected**")
-                        keep_original = st.toggle(
-                            "Keep original competition tag (copy as-is)",
-                            value=False, key="src_keep_orig",
-                            help="Off = re-tag to target competition/level. On = keep original tags.")
-
-                        if st.button(f"📥  Copy {len(selected_ids)} question(s) → {aq_comp} · {aq_level}",
-                                     type="primary", key="src_copy"):
+                        keep_original = st.toggle("Keep original competition tag (copy as-is)", value=False, key="src_keep_orig")
+                        if st.button(f"📥  Copy {len(selected_ids)} question(s) → {aq_comp} · {aq_level}", type="primary", key="src_copy"):
                             copied = 0
                             for did, d in selected_ids:
                                 new_q = dict(d)
@@ -1304,7 +1157,6 @@ Admin2,admin2@example.com,AdminPass!,admin
             st.markdown("#### ⚡ Realtime Contest Control")
             st.caption("Preset student roster, open/close exam window, and monitor live submissions.")
 
-            # Load all competitions
             all_rt_comps = {}
             try:
                 for doc in db.collection("competition_catalog").stream():
@@ -1313,52 +1165,36 @@ Admin2,admin2@example.com,AdminPass!,admin
                     if n: all_rt_comps[n] = d
             except: pass
             for n, info in get_all_competitions(include_disabled=True).items():
-                if n not in all_rt_comps:
-                    all_rt_comps[n] = info
+                if n not in all_rt_comps: all_rt_comps[n] = info
 
             if not all_rt_comps:
                 st.warning("No competitions found. Create one in the ➕ Add Competition tab first.")
             else:
-                sel_name = st.selectbox("Select competition to run",
-                    list(all_rt_comps.keys()), key="rt_sel")
-
+                sel_name = st.selectbox("Select competition to run", list(all_rt_comps.keys()), key="rt_sel")
                 rt_doc_id  = sel_name.replace(" ","_").replace("/","_")
                 rt_doc_ref = db.collection("realtime_sessions").document(rt_doc_id)
                 rt_doc     = rt_doc_ref.get()
                 rt_data    = rt_doc.to_dict() if rt_doc.exists else {}
                 status     = rt_data.get("status","not started")
-                roster     = rt_data.get("roster",[])        # list of UIDs
+                roster     = rt_data.get("roster",[])
                 require_roster = rt_data.get("require_roster", False)
 
-                # ── Tabs inside realtime ────────────
                 rt1, rt2, rt3 = st.tabs(["📋  Roster", "⚡  Controls", "🏆  Live Monitor"])
 
-                # ── rt1: Roster management ───────────
                 with rt1:
                     st.markdown("#### Student Roster")
                     st.caption("Only students on the roster can enter this competition. Leave roster empty to allow all students.")
 
-                    # Require roster toggle
-                    new_require = st.toggle(
-                        "Restrict to roster only (block students not on list)",
-                        value=require_roster, key="rt_require_roster")
+                    new_require = st.toggle("Restrict to roster only (block students not on list)", value=require_roster, key="rt_require_roster")
                     if new_require != require_roster:
                         rt_doc_ref.set({"require_roster": new_require}, merge=True)
                         st.rerun()
 
                     st.divider()
-
-                    # Load all students for selection
                     try:
-                        all_students = [
-                            {"uid": d.id, **d.to_dict()}
-                            for d in db.collection("users").stream()
-                            if d.to_dict().get("role","student") != "admin"
-                        ]
-                    except:
-                        all_students = []
+                        all_students = [{"uid": d.id, **d.to_dict()} for d in db.collection("users").stream() if d.to_dict().get("role","student") != "admin"]
+                    except: all_students = []
 
-                    # Current roster display
                     roster_uids = set(roster)
                     roster_members = [s for s in all_students if s["uid"] in roster_uids]
                     non_roster    = [s for s in all_students if s["uid"] not in roster_uids]
@@ -1369,95 +1205,61 @@ Admin2,admin2@example.com,AdminPass!,admin
                             c1,c2,c3 = st.columns([4,3,1])
                             c1.markdown(f"**{s.get('display_name','—')}**")
                             c2.caption(s.get("email","—"))
-                            if c3.button("✕", key=f"rm_{s['uid']}_{rt_doc_id}",
-                                         use_container_width=True):
+                            if c3.button("✕", key=f"rm_{s['uid']}_{rt_doc_id}", use_container_width=True):
                                 new_roster = [u for u in roster if u != s["uid"]]
                                 rt_doc_ref.set({"roster": new_roster}, merge=True)
                                 st.rerun()
                     else:
-                        if require_roster:
-                            st.warning("Roster is empty — no students can enter yet. Add students below.")
-                        else:
-                            st.info("No roster set — all students can enter.")
+                        if require_roster: st.warning("Roster is empty — no students can enter yet. Add students below.")
+                        else: st.info("No roster set — all students can enter.")
 
                     st.divider()
-
-                    # Add students
                     st.markdown("**Add students to roster**")
 
-                    # Option 1: Search and add individually
                     search_r = st.text_input("Search by name or email", key="rt_roster_search")
-                    filtered_r = [s for s in non_roster
-                                  if search_r.lower() in s.get("display_name","").lower()
-                                  or search_r.lower() in s.get("email","").lower()
-                                  ] if search_r else non_roster
+                    filtered_r = [s for s in non_roster if search_r.lower() in s.get("display_name","").lower() or search_r.lower() in s.get("email","").lower()] if search_r else non_roster
 
                     if filtered_r:
                         st.caption(f"{len(filtered_r)} student(s) not on roster")
                         add_selected = []
                         for s in filtered_r[:20]:
-                            if st.checkbox(
-                                f"{s.get('display_name','—')} · {s.get('email','—')}",
-                                key=f"add_{s['uid']}_{rt_doc_id}"
-                            ):
+                            if st.checkbox(f"{s.get('display_name','—')} · {s.get('email','—')}", key=f"add_{s['uid']}_{rt_doc_id}"):
                                 add_selected.append(s["uid"])
                         if add_selected:
-                            if st.button(f"➕  Add {len(add_selected)} student(s) to roster",
-                                         type="primary", key="rt_add_sel"):
+                            if st.button(f"➕  Add {len(add_selected)} student(s) to roster", type="primary", key="rt_add_sel"):
                                 new_roster = list(set(roster) | set(add_selected))
                                 rt_doc_ref.set({"roster": new_roster}, merge=True)
                                 st.success(f"Added {len(add_selected)} student(s)!")
                                 st.rerun()
 
                     st.divider()
-
-                    # Option 2: Add ALL students at once
                     c_all1, c_all2 = st.columns(2)
-                    if c_all1.button("➕  Add ALL students to roster",
-                                     use_container_width=True, key="rt_add_all"):
+                    if c_all1.button("➕  Add ALL students to roster", use_container_width=True, key="rt_add_all"):
                         all_uids = [s["uid"] for s in all_students]
                         rt_doc_ref.set({"roster": all_uids}, merge=True)
-                        st.success(f"Added all {len(all_uids)} students!")
-                        st.rerun()
-                    if c_all2.button("🗑️  Clear entire roster",
-                                     use_container_width=True, key="rt_clear_roster"):
+                        st.success(f"Added all {len(all_uids)} students!"); st.rerun()
+                    if c_all2.button("🗑️  Clear entire roster", use_container_width=True, key="rt_clear_roster"):
                         rt_doc_ref.set({"roster": []}, merge=True)
-                        st.warning("Roster cleared.")
-                        st.rerun()
+                        st.warning("Roster cleared."); st.rerun()
 
-                    # Option 3: CSV upload for roster
                     st.divider()
                     st.markdown("**Import roster from CSV** (column: `email`)")
-                    roster_csv = st.file_uploader("Upload roster CSV",
-                        type=["csv"], key="rt_roster_csv")
-                    if roster_csv and st.button("📥  Import roster from CSV",
-                                                key="rt_import_csv"):
+                    roster_csv = st.file_uploader("Upload roster CSV", type=["csv"], key="rt_roster_csv")
+                    if roster_csv and st.button("📥  Import roster from CSV", key="rt_import_csv"):
                         import io as _io, csv as _csv
-                        reader = _csv.DictReader(_io.StringIO(
-                            roster_csv.read().decode("utf-8-sig")))
-                        csv_emails = {row.get("email","").strip().lower()
-                                      for row in reader if row.get("email")}
-                        matched_uids = [
-                            s["uid"] for s in all_students
-                            if s.get("email","").lower() in csv_emails
-                        ]
-                        not_found = csv_emails - {
-                            s.get("email","").lower() for s in all_students
-                        }
+                        reader = _csv.DictReader(_io.StringIO(roster_csv.read().decode("utf-8-sig")))
+                        csv_emails = {row.get("email","").strip().lower() for row in reader if row.get("email")}
+                        matched_uids = [s["uid"] for s in all_students if s.get("email","").lower() in csv_emails]
+                        not_found = csv_emails - {s.get("email","").lower() for s in all_students}
                         new_roster = list(set(roster) | set(matched_uids))
                         rt_doc_ref.set({"roster": new_roster}, merge=True)
                         st.success(f"✅  Added {len(matched_uids)} students from CSV!")
-                        if not_found:
-                            st.warning(f"⚠️  {len(not_found)} email(s) not found in system: "
-                                       f"{', '.join(list(not_found)[:5])}")
+                        if not_found: st.warning(f"⚠️  {len(not_found)} email(s) not found in system: {', '.join(list(not_found)[:5])}")
                         st.rerun()
 
-                # ── rt2: Controls ────────────────────
                 with rt2:
                     st.markdown("#### Exam Controls")
-
-                    badge_color = {"open":"#22C55E","closed":"#EF4444",
-                                   "not started":"#8898CC"}.get(status,"#8898CC")
+                    badge_color = {"open":"#22C55E","closed":"#EF4444","not started":"#8898CC"}.get(status,"#8898CC")
                     st.markdown(
                         f"<div style='display:inline-flex;align-items:center;gap:8px;"
                         f"background:#F8F9FF;border:1.5px solid #E8ECF8;border-radius:8px;"
@@ -1467,43 +1269,22 @@ Admin2,admin2@example.com,AdminPass!,admin
                         f"<span style='font-weight:600;color:#1B2B6B;'>"
                         f"Status: {status.upper()}</span></div>",
                         unsafe_allow_html=True)
-                    if rt_data.get("opened_at"):
-                        st.caption(f"Opened: {rt_data['opened_at'].strftime('%d %b %Y %H:%M')}")
-                    if rt_data.get("closed_at"):
-                        st.caption(f"Closed: {rt_data['closed_at'].strftime('%d %b %Y %H:%M')}")
+                    if rt_data.get("opened_at"): st.caption(f"Opened: {rt_data['opened_at'].strftime('%d %b %Y %H:%M')}")
+                    if rt_data.get("closed_at"): st.caption(f"Closed: {rt_data['closed_at'].strftime('%d %b %Y %H:%M')}")
 
-                    # Roster summary
-                    if require_roster:
-                        st.info(f"🔒 Restricted to roster: **{len(roster)} student(s)** registered")
-                    else:
-                        st.info("🔓 Open to all students (no roster restriction)")
+                    if require_roster: st.info(f"🔒 Restricted to roster: **{len(roster)} student(s)** registered")
+                    else: st.info("🔓 Open to all students (no roster restriction)")
 
                     c1,c2,c3 = st.columns(3)
                     if c1.button("▶️  Open exam", type="primary", use_container_width=True):
-                        rt_doc_ref.set({
-                            "competition": sel_name,
-                            "status":      "open",
-                            "opened_at":   datetime.now(timezone.utc),
-                            "closed_at":   None,
-                        }, merge=True)
-                        st.success(f"✅  **{sel_name}** is now OPEN!")
-                        st.rerun()
+                        rt_doc_ref.set({"competition": sel_name, "status": "open", "opened_at": datetime.now(timezone.utc), "closed_at": None}, merge=True)
+                        st.success(f"✅  **{sel_name}** is now OPEN!"); st.rerun()
                     if c2.button("⏹️  Close exam", use_container_width=True):
-                        rt_doc_ref.set({
-                            "status":    "closed",
-                            "closed_at": datetime.now(timezone.utc),
-                        }, merge=True)
-                        st.warning(f"🔒  **{sel_name}** is now CLOSED.")
-                        st.rerun()
+                        rt_doc_ref.set({"status": "closed", "closed_at": datetime.now(timezone.utc)}, merge=True)
+                        st.warning(f"🔒  **{sel_name}** is now CLOSED."); st.rerun()
                     if c3.button("🔄  Reset", use_container_width=True):
-                        rt_doc_ref.set({
-                            "competition":"not started",
-                            "status":     "not started",
-                            "opened_at":  None,
-                            "closed_at":  None,
-                        }, merge=True)
-                        st.info("Reset.")
-                        st.rerun()
+                        rt_doc_ref.set({"competition":"not started", "status": "not started", "opened_at": None, "closed_at": None}, merge=True)
+                        st.info("Reset."); st.rerun()
 
                     st.divider()
                     app_url   = st.secrets.get("APP_URL","https://share.streamlit.io")
@@ -1512,7 +1293,6 @@ Admin2,admin2@example.com,AdminPass!,admin
                     st.code(share_url, language=None)
                     st.caption("Students click the link → login → waiting room → auto-enters when you open the exam")
 
-                # ── rt3: Live monitor ────────────────
                 with rt3:
                     st.markdown("#### 🏆 Live Monitor")
                     st.caption("Shows submitted results AND live progress of students currently in the exam.")
@@ -1522,23 +1302,13 @@ Admin2,admin2@example.com,AdminPass!,admin
 
                     if st.session_state.get("rt_lb_show"):
                         try:
-                            # Get all submissions for this competition
-                            # Note: no order_by to avoid needing a composite Firestore index
                             submissions = {}
                             for u in db.collection("users").stream():
-                                uid  = u.id
-                                prof = u.to_dict()
+                                uid = u.id; prof = u.to_dict()
                                 if prof.get("role") == "admin": continue
-                                ss_all = list(
-                                    db.collection("users").document(uid)
-                                    .collection("exam_sessions")
-                                    .where("competition","==",sel_name)
-                                    .stream()
-                                )
+                                ss_all = list(db.collection("users").document(uid).collection("exam_sessions").where("competition","==",sel_name).stream())
                                 if ss_all:
-                                    # Pick best score — sort in Python, no index needed
-                                    best = max(ss_all,
-                                               key=lambda d: d.to_dict().get("raw_score",0))
+                                    best = max(ss_all, key=lambda d: d.to_dict().get("raw_score",0))
                                     s  = best.to_dict()
                                     ts = s.get("timestamp_start")
                                     submissions[uid] = {
@@ -1548,119 +1318,71 @@ Admin2,admin2@example.com,AdminPass!,admin
                                         "max":   s.get("max_score",0),
                                         "pct":   s.get("pct",0),
                                         "time":  ts.strftime("%H:%M:%S") if ts else "—",
-                                        "dur":   f"{s.get('duration_sec',0)//60}m "
-                                                 f"{s.get('duration_sec',0)%60}s",
+                                        "dur":   f"{s.get('duration_sec',0)//60}m {s.get('duration_sec',0)%60}s",
                                     }
 
-                            # Determine who to show
                             if roster and require_roster:
-                                # Show roster students only
-                                roster_students = {
-                                    s["uid"]: s for s in all_students
-                                    if s["uid"] in roster_uids
-                                }
+                                roster_students = {s["uid"]: s for s in all_students if s["uid"] in roster_uids}
                                 submitted_uids = set(submissions.keys())
                                 waiting_uids   = roster_uids - submitted_uids
 
-                                submitted_list = sorted(
-                                    [submissions[uid] for uid in submitted_uids if uid in roster_uids],
-                                    key=lambda x:x["score"], reverse=True
-                                )
-                                waiting_list = [
-                                    roster_students[uid]
-                                    for uid in waiting_uids
-                                    if uid in roster_students
-                                ]
+                                submitted_list = sorted([submissions[uid] for uid in submitted_uids if uid in roster_uids], key=lambda x:x["score"], reverse=True)
+                                waiting_list = [roster_students[uid] for uid in waiting_uids if uid in roster_students]
                             else:
-                                # Show all who submitted
-                                submitted_list = sorted(
-                                    submissions.values(),
-                                    key=lambda x:x["score"], reverse=True
-                                )
+                                submitted_list = sorted(submissions.values(), key=lambda x:x["score"], reverse=True)
                                 waiting_list = []
 
-                            # Load live progress from Firestore sub-collection
                             try:
-                                prog_docs = list(
-                                    db.collection("realtime_sessions")
-                                    .document(rt_doc_id)
-                                    .collection("progress")
-                                    .stream()
-                                )
+                                prog_docs = list(db.collection("realtime_sessions").document(rt_doc_id).collection("progress").stream())
                                 progress_map = {d.id: d.to_dict() for d in prog_docs}
-                            except:
-                                progress_map = {}
+                            except: progress_map = {}
 
-                            in_progress = {
-                                uid: p for uid, p in progress_map.items()
-                                if p.get("status") == "in_progress"
-                            }
+                            in_progress = {uid: p for uid, p in progress_map.items() if p.get("status") == "in_progress"}
 
-                            # Summary
                             sc1,sc2,sc3,sc4 = st.columns(4)
                             sc1.metric("Submitted",   len(submitted_list))
                             sc2.metric("In progress", len(in_progress))
                             sc3.metric("Waiting",     len(waiting_list))
                             sc4.metric("Total",       len(submitted_list)+len(in_progress)+len(waiting_list))
 
-                            # Live progress table
                             if in_progress:
                                 st.divider()
                                 st.markdown("#### 📝 Currently in exam")
                                 ph1,ph2,ph3,ph4,ph5 = st.columns([3,2,2,2,3])
-                                for col,lbl in zip([ph1,ph2,ph3,ph4,ph5],
-                                    ["Name","Current Q","Answered","Progress",""]):
-                                    col.markdown(f"**{lbl}**")
-                                st.markdown("<hr style='margin:4px 0;border-color:#E8ECF8;'>",
-                                            unsafe_allow_html=True)
-                                for p_uid, p in sorted(
-                                    in_progress.items(),
-                                    key=lambda x: x[1].get("pct_done",0), reverse=True
-                                ):
+                                for col,lbl in zip([ph1,ph2,ph3,ph4,ph5], ["Name","Current Q","Answered","Progress",""]): col.markdown(f"**{lbl}**")
+                                st.markdown("<hr style='margin:4px 0;border-color:#E8ECF8;'>", unsafe_allow_html=True)
+                                for p_uid, p in sorted(in_progress.items(), key=lambda x: x[1].get("pct_done",0), reverse=True):
                                     pname   = p.get("display_name","—")
                                     cur_q   = p.get("current_q",0)
                                     ans     = p.get("answered",0)
                                     total_q = p.get("total",0)
                                     pct     = p.get("pct_done",0)
                                     updated = p.get("updated_at")
-                                    ago     = ""
-                                    if updated:
-                                        secs = int((datetime.now(timezone.utc)-updated).total_seconds())
-                                        ago  = f"{secs}s ago"
+                                    ago     = f"{int((datetime.now(timezone.utc)-updated).total_seconds())}s ago" if updated else ""
 
                                     pr1,pr2,pr3,pr4,pr5 = st.columns([3,2,2,2,3])
                                     pr1.markdown(f"**{pname}**")
                                     pr2.markdown(f"Q{cur_q} / {total_q}")
                                     pr3.markdown(f"{ans} answered")
-                                    pr4.progress(pct/100 if pct<=100 else 1.0,
-                                                 text=f"{pct}%")
+                                    pr4.progress(pct/100 if pct<=100 else 1.0, text=f"{pct}%")
                                     pr5.caption(ago)
 
-                            # Submitted table
                             if submitted_list:
                                 st.markdown("#### ✅ Submitted")
                                 h1,h2,h3,h4,h5,h6 = st.columns([1,3,2,2,2,2])
-                                for col,lbl in zip(
-                                    [h1,h2,h3,h4,h5,h6],
-                                    ["#","Name","Score","Accuracy","Time","Duration"]
-                                ):
-                                    col.markdown(f"**{lbl}**")
+                                for col,lbl in zip([h1,h2,h3,h4,h5,h6], ["#","Name","Score","Accuracy","Time","Duration"]): col.markdown(f"**{lbl}**")
                                 st.divider()
                                 for rank,s in enumerate(submitted_list,1):
-                                    medal = ("🥇" if rank==1 else
-                                             "🥈" if rank==2 else
-                                             "🥉" if rank==3 else f"**{rank}**")
+                                    medal = ("🥇" if rank==1 else "🥈" if rank==2 else "🥉" if rank==3 else f"**{rank}**")
                                     r1,r2,r3,r4,r5,r6 = st.columns([1,3,2,2,2,2])
                                     r1.markdown(medal)
                                     r2.markdown(f"**{s['name']}**")
                                     r3.markdown(f"{s['score']} / {s['max']}")
-                                    pct_color = ("🟢" if s["pct"]>=70 else
-                                                 "🟡" if s["pct"]>=50 else "🔴")
+                                    pct_color = ("🟢" if s["pct"]>=70 else "🟡" if s["pct"]>=50 else "🔴")
                                     r4.markdown(f"{pct_color} {s['pct']}%")
                                     r5.markdown(s["time"])
                                     r6.markdown(s["dur"])
 
-                            # Waiting table
                             if waiting_list:
                                 st.divider()
                                 st.markdown(f"#### ⏳ Not yet submitted ({len(waiting_list)})")
@@ -1671,20 +1393,10 @@ Admin2,admin2@example.com,AdminPass!,admin
 
                             if not submitted_list and not waiting_list:
                                 st.info("No submissions yet. Waiting for students…")
-
                         except Exception as e:
                             st.error(f"Monitor error: {e}")
-
     footer()
 
-
-# ══════════════════════════════════════════════
-# PDF Report generator (student personal report)
-# ══════════════════════════════════════════════
-
-# ══════════════════════════════════════════════
-# Page: My History (student)
-# ══════════════════════════════════════════════
 def page_admin_analytics():
     require_auth(); require_admin(); inject_css()
     topbar("Analytics Dashboard")
@@ -1718,7 +1430,6 @@ def page_admin_analytics():
         except Exception as e:
             st.error(f"Error: {e}"); st.markdown("</div>",unsafe_allow_html=True); footer(); return
 
-    # ── Summary metrics ────────────────────────
     n_students  = len(students)
     n_sessions  = len(all_sessions)
     avg_pct     = round(sum(s.get("pct",0) for s in all_sessions)/n_sessions,1) if all_sessions else 0
@@ -1731,9 +1442,7 @@ def page_admin_analytics():
     c4.metric("Completion Rate",  f"{completion}%")
     st.divider()
 
-    # ── Topic weakness heatmap ─────────────────
     col_l, col_r = st.columns(2)
-
     with col_l:
         st.markdown("#### 📊 Class average by topic")
         topic_totals = {t:{"correct":0,"total":0} for t in TOPICS}
@@ -1777,8 +1486,6 @@ def page_admin_analytics():
             st.info("No session timeline data yet.")
 
     st.divider()
-
-    # ── At-risk students ───────────────────────
     st.markdown("#### ⚠️ Students needing attention (accuracy < 50%)")
     at_risk = {}
     for s in all_sessions:
@@ -1786,8 +1493,7 @@ def page_admin_analytics():
         if nm not in at_risk: at_risk[nm] = []
         at_risk[nm].append(s.get("pct",0))
 
-    at_risk_list = [(nm, round(sum(v)/len(v),1), len(v))
-                    for nm,v in at_risk.items() if sum(v)/len(v)<50]
+    at_risk_list = [(nm, round(sum(v)/len(v),1), len(v)) for nm,v in at_risk.items() if sum(v)/len(v)<50]
     at_risk_list.sort(key=lambda x:x[1])
 
     if at_risk_list:
@@ -1800,14 +1506,11 @@ def page_admin_analytics():
         st.success("All students are performing at 50%+ — great job! 🎉")
 
     st.divider()
-
-    # ── Competition popularity ─────────────────
     st.markdown("#### 🏆 Most popular competitions")
     from collections import Counter as _Counter
     comp_counts = _Counter(s.get("competition","?") for s in all_sessions)
     for comp,count in comp_counts.most_common():
-        avg = round(sum(s.get("pct",0) for s in all_sessions if s.get("competition","")==comp)
-                    / count, 1)
+        avg = round(sum(s.get("pct",0) for s in all_sessions if s.get("competition","")==comp) / count, 1)
         c1,c2,c3 = st.columns([4,2,2])
         c1.markdown(f"**{comp}**")
         c2.markdown(f"{count} sessions")
@@ -1816,10 +1519,6 @@ def page_admin_analytics():
     st.markdown("</div>", unsafe_allow_html=True)
     footer()
 
-
-# ══════════════════════════════════════════════
-# Page: Realtime Competition
-# ══════════════════════════════════════════════
 def page_admin_student_history():
     require_auth(); require_admin(); inject_css()
     uid   = st.session_state.get("admin_view_uid","")
@@ -1830,12 +1529,7 @@ def page_admin_student_history():
         st.error("No student selected."); return
 
     try:
-        sessions = [s.to_dict() for s in
-                    db.collection("users").document(uid)
-                    .collection("exam_sessions")
-                    .order_by("timestamp_start",
-                              direction=firestore.Query.DESCENDING)
-                    .limit(100).stream()]
+        sessions = [s.to_dict() for s in db.collection("users").document(uid).collection("exam_sessions").order_by("timestamp_start", direction=firestore.Query.DESCENDING).limit(100).stream()]
     except Exception as e:
         st.error(f"Error: {e}"); sessions = []
 
@@ -1863,7 +1557,6 @@ def page_admin_student_history():
         st.info("No sessions recorded yet.")
         st.markdown("</div>", unsafe_allow_html=True); footer(); return
 
-    # Filter
     comps = sorted(set(s.get("competition","") for s in sessions))
     flt   = st.selectbox("Filter by competition", ["All"]+comps, key="adm_hist_filter")
     show  = [s for s in sessions if flt=="All" or s.get("competition","")==flt]
@@ -1878,46 +1571,28 @@ def page_admin_student_history():
         wrong   = sum(1 for a in answers_map.values() if not a.get("is_correct") and a.get("chosen"))
         blank   = sum(1 for a in answers_map.values() if not a.get("chosen"))
 
-        with st.expander(
-            f"{dot}  {s.get('competition','')} · {s.get('level','')} · "
-            f"{s.get('difficulty','').capitalize()} · "
-            f"**{s.get('raw_score','')} / {s.get('max_score','')}** ({pct}%) · {dt}"
-        ):
-            # Summary row
+        with st.expander(f"{dot}  {s.get('competition','')} · {s.get('level','')} · {s.get('difficulty','').capitalize()} · **{s.get('raw_score','')} / {s.get('max_score','')}** ({pct}%) · {dt}"):
             c1,c2,c3 = st.columns(3)
             dur = s.get("duration_sec",0)
             c1.markdown(f"**Duration:** {dur//60}m {dur%60}s")
             c2.markdown(f"**Questions:** {s.get('total_questions','—')}")
             c3.markdown(f"✅ {correct} &nbsp; ❌ {wrong} &nbsp; ⬜ {blank}")
 
-            # Topic breakdown
             tbd = s.get("topic_breakdown",{})
             if tbd:
                 st.markdown("**Topic breakdown**")
                 for topic,v in tbd.items():
                     tp    = round(v["correct"]/v["total"]*100) if v["total"]>0 else 0
                     color = "#4A7CF7" if tp>=50 else "#F472B6"
-                    st.markdown(
-                        f'<div class="mc-topic-row">'
-                        f'<span class="mc-topic-name">{topic}</span>'
-                        f'<div class="mc-bar-bg"><div class="mc-bar-fill" '
-                        f'style="width:{tp}%;background:{color};"></div></div>'
-                        f'<span class="mc-bar-pct">{tp}%</span></div>',
-                        unsafe_allow_html=True)
+                    st.markdown(f'<div class="mc-topic-row"><span class="mc-topic-name">{topic}</span><div class="mc-bar-bg"><div class="mc-bar-fill" style="width:{tp}%;background:{color};"></div></div><span class="mc-bar-pct">{tp}%</span></div>', unsafe_allow_html=True)
 
-            # Per-question answer log
             if answers_map:
                 st.divider()
                 st.markdown("**Per-question answer log**")
                 h1,h2,h3,h4,h5,h6 = st.columns([1,4,2,2,2,2])
-                for col,lbl in zip([h1,h2,h3,h4,h5,h6],
-                                   ["Q","Topic","Chosen","Correct","Result","Time(s)"]):
-                    col.markdown(
-                        f"<span style='font-size:11px;color:#8898CC;text-transform:uppercase;"
-                        f"letter-spacing:.06em;font-family:monospace;'>{lbl}</span>",
-                        unsafe_allow_html=True)
-                st.markdown("<hr style='margin:4px 0;border-color:#E8ECF8;'>",
-                            unsafe_allow_html=True)
+                for col,lbl in zip([h1,h2,h3,h4,h5,h6], ["Q","Topic","Chosen","Correct","Result","Time(s)"]):
+                    col.markdown(f"<span style='font-size:11px;color:#8898CC;text-transform:uppercase;letter-spacing:.06em;font-family:monospace;'>{lbl}</span>", unsafe_allow_html=True)
+                st.markdown("<hr style='margin:4px 0;border-color:#E8ECF8;'>", unsafe_allow_html=True)
                 for i,(qid,ans) in enumerate(sorted(answers_map.items()),1):
                     ok     = ans.get("is_correct",False)
                     chosen = ans.get("chosen") or "—"
@@ -1927,38 +1602,11 @@ def page_admin_student_history():
                     icon   = "✅" if ok else ("⬜" if not ans.get("chosen") else "❌")
                     r1,r2,r3,r4,r5,r6 = st.columns([1,4,2,2,2,2])
                     r1.markdown(f"**{i}**")
-                    r2.markdown(f"<span style='font-size:13px;'>{topic}</span>",
-                                unsafe_allow_html=True)
+                    r2.markdown(f"<span style='font-size:13px;'>{topic}</span>", unsafe_allow_html=True)
                     r3.markdown(f"`{chosen}`")
                     r4.markdown(f"`{right}`")
                     r5.markdown(icon)
-                    r6.markdown(f"{tsec}" if tsec else "—")
+                    r6.markdown(f"{tsec}s" if tsec else "—")
 
     st.markdown("</div>", unsafe_allow_html=True)
     footer()
-
-
-
-    if "uid" not in st.session_state: return
-    with st.sidebar:
-        st.markdown(f"**{st.session_state.get('display_name','')}**")
-        st.caption(st.session_state.get("role","student").capitalize())
-        st.divider()
-        if st.button("🏠  Dashboard",       use_container_width=True):
-            for k in ("rt_comp","rt_status"): st.session_state.pop(k,None)
-            st.session_state["page"]="dashboard"; st.rerun()
-        if st.button("📋  My History",       use_container_width=True): st.session_state["page"]="history";     st.rerun()
-        if st.button("🏆  Leaderboard",      use_container_width=True): st.session_state["page"]="leaderboard"; st.rerun()
-        if st.session_state.get("role")=="admin":
-            st.divider()
-            if st.button("⚙️  Admin Panel",      use_container_width=True): st.session_state["page"]="admin";            st.rerun()
-            if st.button("📊  Analytics",        use_container_width=True): st.session_state["page"]="admin_analytics";  st.rerun()
-        st.divider()
-        if st.button("Log out", use_container_width=True): st.session_state.clear(); st.rerun()
-        st.markdown("---")
-        st.markdown("<div style='font-size:10px;color:rgba(255,255,255,.3);font-family:monospace;line-height:1.7;'>"
-                    "© Math Mission Thailand 2026<br>MathComp Platform</div>", unsafe_allow_html=True)
-
-# ══════════════════════════════════════════════
-# Router
-# ══════════════════════════════════════════════
