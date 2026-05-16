@@ -1,58 +1,88 @@
 """
 MathComp — pages_admin.py
-Admin operations panel: AI-assisted OCR workflows and structured spreadsheet export mechanics
-© Math Mission Thailand 2026
+Admin control center for database management, user tracking, and AI configurations
 """
 import streamlit as st
 import io, csv
-from shared import inject_css, topbar, footer, COMPETITIONS_BUILTIN
+from shared import TOPICS
 
 def page_admin():
-    inject_css()
-    topbar("แผงควบคุมระบบจัดการแพลตฟอร์ม (Admin Center)")
+    st.markdown("## ⚙️ ศูนย์ควบคุมผู้ดูแลระบบ (Admin Center)")
     
-    t1, t2, t3 = st.tabs(["🤖 ระบบจัดการคลังข้อสอบ & AI OCR", "👥 บัญชีสมาชิกรายชื่อนักเรียน", "🛡️ มาตรการความปลอดภัย"])
+    tab_ai, tab_users, tab_settings = st.tabs([
+        "🤖 ระบบ AI & จัดการคลังข้อสอบ", 
+        "👥 ข้อมูลผู้เรียน & ส่งออกรายงาน", 
+        "🛡️ การตั้งค่าความปลอดภัย"
+    ])
     
-    with t1:
-        st.subheader("🔮 ระบบปัญญาประดิษฐ์นำเข้าข้อสอบเข้าคลังข้อมูล")
-        m = st.selectbox("เลือกช่องทางการบันทึกและแปลงข้อสอบ", [
-            "พิมพ์โจทย์โดยตรงเป็น LaTeX Code ($...$)",
-            "อัปโหลดรูปภาพไฟล์โจทย์รายข้อ",
-            "รูปภาพโจทย์ + ระบบเปิด AI อ่านและเรียบเรียง LaTeX แบบคมชัดใหม่อัตโนมัติ",
-            "อัปโหลดไฟล์ชุด PDF ใหญ่ เพื่อให้ระบบ AI ตัดแบ่งโจทย์แยกข้ออัตโนมัติ"
-        ])
+    # --- TAB 1: AI & QUESTIONS ---
+    with tab_ai:
+        st.markdown("<div class='premium-card'>", unsafe_allow_html=True)
+        st.markdown("<h4>นำเข้าข้อสอบด้วยปัญญาประดิษฐ์ (AI OCR & Extraction)</h4>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #64748B;'>ระบบวิเคราะห์รูปภาพหรือ PDF และแปลงเป็นโครงสร้าง JSON พร้อม LaTeX Code ทันที</p>", unsafe_allow_html=True)
         
-        up = st.file_uploader("เลือกไฟล์รูปภาพหรือเอกสารโจทย์ข้อสอบ (.png, .jpg, .pdf)", type=["png","jpg","jpeg","pdf"])
-        if up:
-            st.success("🤖 AI มอบความแม่นยำสูง! ประมวลผลและแปลงสัญลักษณ์คณิตศาสตร์เรียบร้อยแล้ว:")
-            st.code(r"\int_{0}^{\infty} e^{-x^2} dx = \frac{\sqrt{\pi}}{2}", language="latex")
-            
-    with t2:
-        st.subheader("📊 จัดเก็บประวัติข้อมูลรายบุคคลและผลคะแนนรวม")
+        method = st.radio("วิธีการนำเข้าข้อมูล", [
+            "แยกไฟล์รูปภาพรายข้อ (Single Image OCR)",
+            "อัปโหลดไฟล์ PDF ฉบับเต็ม (AI Batch Split & Extract)"
+        ], horizontal=True)
         
-        # Generation of an in-memory buffer spreadsheet for export
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["StudentID", "StudentName", "ExamTitle", "ScoreAchieved", "TotalQuestions", "CompletionRate"])
-        w.writerow(["MMT-082", "Chalisa Chirasakyakul", "Australian Math Comp - Junior", "24", "30", "80.0%"])
-        w.writerow(["MMT-104", "Kompat Athikomkulchai", "Sansu Olympic - Senior", "18", "20", "90.0%"])
+        upload_file = st.file_uploader("เลือกไฟล์ (.png, .jpg, .pdf)", type=['png', 'jpg', 'pdf'])
         
-        st.download_button(
-            label="📥 ส่งออกรายงานข้อมูลคะแนนทั้งหมดเป็นไฟล์ Spreadsheet (.CSV)",
-            data=buf.getvalue(),
-            file_name="MathComp_Class_Performance_Report.csv",
-            mime="text/csv"
-        )
-        st.info("💡 สามารถนำไฟล์นี้ไปเปิดใช้งานบน Microsoft Excel หรือ Google Sheets เพื่อคำนวณเงินภายนอกได้ทันที")
-        
-    with t3:
-        st.subheader("🛡️ เปิด/ปิด สวิตช์ฟีเจอร์ป้องกันลิขสิทธิ์โจทย์และการโกงข้อสอบ")
-        st.toggle("เปิดมาตรการ Anti-Right Click บล็อกการกดคลิกขวา", value=True)
-        st.toggle("เปิดระบบเคลียร์ Clipboard เมื่อนักเรียนสลับหน้าจอ (สกัด AI Chat)", value=True)
-        st.toggle("บล็อกระบบตรวจสอบซอร์สโค้ดหลังบ้าน (Block DevTools F12)", value=True)
-        st.success("บันทึกการปรับปรุงระบบมาตรการเชิงรับเรียบร้อย")
-        
-    footer()
+        if upload_file and st.button("เริ่มการประมวลผลด้วย AI 🚀", type="primary"):
+            with st.spinner("Anthropic Claude กำลังวิเคราะห์และแปลงโครงสร้างสมการ..."):
+                import time; time.sleep(2) # Simulate API call latency
+                st.success("✅ วิเคราะห์สำเร็จ! พบข้อสอบจำนวน 12 ข้อ")
+                
+                # Show parsed result preview
+                with st.expander("ดูตัวอย่างข้อมูลที่ AI สกัดได้ (JSON/LaTeX)"):
+                    st.code("""
+{
+    "question_text": "กำหนดให้ $f(x) = x^3 - 3x^2 + 2x$ จงหาค่า $x$ ที่ทำให้ $f'(x) = 0$",
+    "choices": ["$1 \\pm \\frac{\\sqrt{3}}{3}$", "$1 \\pm \\sqrt{3}$", "$2, 1$", "$-1, -2$"],
+    "correct_answer": "A",
+    "topic": "Algebra",
+    "difficulty": "Intermediate"
+}
+                    """, language="json")
+                st.button("บันทึกข้อสอบเข้าคลังข้อมูล (Save to Firestore)", type="primary")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-def page_admin_analytics(): inject_css(); topbar("วิเคราะห์เชิงสถิติของระบบ"); footer()
-def page_admin_student_history(): inject_css(); topbar("สรุปประวัติผลคะแนนรายบุคคล"); footer()
+    # --- TAB 2: USERS & EXPORT ---
+    with tab_users:
+        st.markdown("<div class='premium-card'>", unsafe_allow_html=True)
+        st.markdown("<h4>ระบบรายงานผล (Export Data)</h4>", unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        comp_filter = col1.selectbox("กรองตามรายการสอบ", ["ทั้งหมด", "AMC 8", "Sansu Olympic", "สอวน."])
+        date_filter = col2.selectbox("ช่วงเวลา", ["สัปดาห์นี้", "เดือนนี้", "ทั้งหมด"])
+        
+        if st.button("สร้างรายงานข้อมูล (Generate Report)", type="primary"):
+            # Generate mock CSV buffer for download
+            csv_buf = io.StringIO()
+            writer = csv.writer(csv_buf)
+            writer.writerow(["UID", "Name", "Competition", "Score", "Total", "Accuracy", "Date"])
+            writer.writerow(["STD001", "Chatawut C.", "AMC 8", 22, 25, "88%", "2026-05-16"])
+            writer.writerow(["STD002", "Kompat A.", "Sansu Olympic", 18, 20, "90%", "2026-05-15"])
+            
+            st.download_button(
+                label="📥 ดาวน์โหลดไฟล์ Excel (CSV)",
+                data=csv_buf.getvalue(),
+                file_name="MathComp_Results.csv",
+                mime="text/csv",
+                type="primary"
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # --- TAB 3: SETTINGS ---
+    with tab_settings:
+        st.markdown("<div class='premium-card'>", unsafe_allow_html=True)
+        st.markdown("<h4>🛡️ ระบบป้องกันการโกงและ AI-Resistant</h4>", unsafe_allow_html=True)
+        
+        st.toggle("บล็อกการคลิกขวา (Disable Right-click)", value=True)
+        st.toggle("บล็อกการคัดลอกข้อความ (Disable Copy/Paste)", value=True)
+        st.toggle("ตรวจจับการสลับหน้าต่างเบราว์เซอร์ (Tab-switch monitoring)", value=True)
+        st.toggle("ล้างข้อมูล Clipboard เพื่อป้องกันการนำโจทย์ไปถาม AI", value=True)
+        st.toggle("บล็อกเครื่องมือนักพัฒนา (Disable DevTools F12)", value=False)
+        
+        st.button("บันทึกการตั้งค่าระบบ", type="primary")
+        st.markdown("</div>", unsafe_allow_html=True)
