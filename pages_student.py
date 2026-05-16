@@ -1,227 +1,226 @@
 """
 MathComp — pages_student.py
-Student flows: Adaptive question configuration, secure exam, and Radar analytics reports
-© Math Mission Thailand 2026
+Student portal, exam taking interface, and analytics rendering
 """
 import streamlit as st
 import time, random
 import plotly.graph_objects as go
-from shared import (
-    inject_css, topbar, footer, db, get_all_competitions,
-    DIFFICULTY_OPTIONS, compute_score, save_session, get_advanced_anti_ai_js,
-    COLOR_PRIMARY, COLOR_SECONDARY, TOPICS
-)
+from shared import get_all_competitions, DIFFICULTY_OPTIONS, compute_score, get_anti_ai_js, load_settings, db
 
 def page_login():
-    inject_css()
-    topbar("เข้าสู่ระบบจัดสอบออนไลน์", show_user=False)
-    
-    st.markdown("""
-    <div style='max-width: 420px; margin: 40px auto; background: white; border-radius: 16px; padding: 35px; box-shadow: 0 10px 25px rgba(27,43,107,0.08);'>
-        <div style='text-align: center; margin-bottom: 25px;'>
-            <h2 style='margin: 0; font-size:24px;'>Math Mission Thailand</h2>
-            <p style='color:#64748B; font-size:13px; margin-top:5px;'>Premium Assessment Portal</p>
+    _, col, _ = st.columns([1, 1.2, 1])
+    with col:
+        st.markdown("""
+        <div class="premium-card" style="text-align: center; padding: 3rem 2rem;">
+            <div style="width: 64px; height: 64px; background: #EEF2FF; border-radius: 16px; margin: 0 auto 1.5rem; display: flex; align-items: center; justify-content: center; font-size: 32px;">📐</div>
+            <h2 style="margin-bottom: 0.5rem;">Math Mission Thailand</h2>
+            <p style="color: #64748B; margin-bottom: 2rem;">Platform การสอบคณิตศาสตร์มาตรฐานสากล</p>
         </div>
-    """, unsafe_allow_html=True)
-    
-    u = st.text_input("ชื่อผู้ใช้งาน (Username / Email)", placeholder="เช่น chatawut_admin")
-    p = st.text_input("รหัสผ่าน (Password)", type="password", placeholder="••••••••")
-    
-    role_sel = st.radio("ระดับสิทธิ์การเข้าถึง", ["นักเรียนในคลาส (Member)", "ผู้ดูแลระบบ (Admin)"], horizontal=True)
-    
-    if st.button("🔒 ยืนยันการลงชื่อเข้าใช้", type="primary", use_container_width=True):
-        if u and p:
-            role = "admin" if "Admin" in role_sel else "student"
-            st.session_state.update({"uid": f"uid_{u}", "display_name": u.capitalize(), "role": role, "page": "dashboard"})
-            st.rerun()
-        else:
-            st.error("กรุณากรอกข้อมูลบัญชีผู้ใช้ให้ครบถ้วน")
-    st.markdown("</div>", unsafe_allow_html=True)
-    footer()
+        """, unsafe_allow_html=True)
+        
+        with st.form("login_form"):
+            email = st.text_input("อีเมลผู้ใช้งาน", placeholder="student@example.com")
+            pwd = st.text_input("รหัสผ่าน", type="password", placeholder="••••••••")
+            role_mock = st.selectbox("โหมดเข้าสู่ระบบ (จำลอง)", ["Student", "Admin"])
+            
+            submit = st.form_submit_button("เข้าสู่ระบบ", use_container_width=True, type="primary")
+            if submit:
+                if email and pwd:
+                    st.session_state.update({
+                        "uid": f"user_{int(time.time())}",
+                        "display_name": email.split("@")[0].title(),
+                        "role": role_mock.lower(),
+                        "page": "dashboard"
+                    })
+                    st.rerun()
+                else:
+                    st.error("กรุณากรอกข้อมูลให้ครบถ้วน")
 
 def page_dashboard():
-    inject_css()
-    topbar("แผงควบคุมระบบคัดเลือกชุดข้อสอบ")
-    
-    st.markdown("<div class='premium-card'>", unsafe_allow_html=True)
-    st.markdown("<h3>🎯 ปรับแต่งและสร้างชุดข้อสอบรายบุคคล</h3>", unsafe_allow_html=True)
-    
-    comps = get_all_competitions()
-    sc = st.selectbox("เลือกรายการสอบแข่งขันคณิตศาสตร์", list(comps.keys()))
-    
-    c_info = comps[sc]
-    lvl = st.selectbox("เลือกระดับชั้นเรียน (Grade / Year)", c_info["levels"])
-    diff = st.selectbox("เลือกระดับความยากของข้อสอบ", DIFFICULTY_OPTIONS)
-    nq = st.slider("จำนวนข้อสอบที่ต้องการทดสอบ", 5, 30, 10, step=5)
-    
-    # Calculate algorithmic dynamic time suggestion
-    t_per_q = c_info.get("default_time_per_q", 120)
-    suggested_mins = (nq * t_per_q) // 60
+    name = st.session_state.get("display_name", "Student")
     
     st.markdown(f"""
-    <div style='background:#EEF3FF; border-left:4px solid {COLOR_SECONDARY}; padding:15px; border-radius:8px; margin: 20px 0;'>
-        ℹ️ <strong>เวลาทำข้อสอบแนะนำ:</strong> ระบบสุ่มข้อสอบอัจฉริยะวิเคราะห์ว่ารายการนี้ควรใช้เวลาทำ <strong>{suggested_mins} นาที</strong>
+    <div style="margin-bottom: 2rem;">
+        <h1 style="font-size: 2rem; margin-bottom: 0.5rem;">สวัสดี, {name} 👋</h1>
+        <p style="color: #64748B; font-size: 1.1rem;">เลือกชุดข้อสอบและเริ่มต้นการทดสอบของคุณ</p>
     </div>
     """, unsafe_allow_html=True)
     
-    if st.button("🚀 เริ่มต้นเข้าทำข้อสอบ (Start Assessment)", type="primary", use_container_width=True):
-        mqs = []
-        for i in range(nq):
-            mqs.append({
-                "id": f"q_{i+1}",
-                "topic": random.choice(c_info["topics"]),
-                "question_text": f"โจทย์ข้อที่ {i+1}: พิจารณาสมการพหุนาม $x^2 - 5x + 6 = 0$ จงคำนวณหาค่าของผลบวกของรากทั้งหมด",
-                "choices": ["3", "5", "6", "2"],
-                "correct_answer": "B"
-            })
+    # Metrics
+    c1, c2, c3 = st.columns(3)
+    c1.metric("คะแนนสูงสุด", "85%", "+5% จากครั้งก่อน")
+    c2.metric("จำนวนข้อสอบที่ทำ", "120 ข้อ")
+    c3.metric("เวลาฝึกซ้อมสะสม", "14 ชม.")
+    
+    st.markdown("<hr style='margin: 2rem 0; border-color: #E2E8F0;'>", unsafe_allow_html=True)
+    
+    # Exam Configurator
+    with st.container():
+        st.markdown("<div class='premium-card'>", unsafe_allow_html=True)
+        st.markdown("<h3>🎯 สร้างชุดข้อสอบ (Exam Configurator)</h3>", unsafe_allow_html=True)
+        
+        comps = get_all_competitions()
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            comp_name = st.selectbox("รายการสอบ", list(comps.keys()))
+            level = st.selectbox("ระดับชั้น", comps[comp_name]["levels"])
             
-        st.session_state.update({
-            "page": "exam", "competition": sc, "level": lvl, "difficulty": diff,
-            "questions": mqs, "answers": {}, "flagged": set(), "current_idx": 0,
-            "start_time": time.time(), "time_limit": suggested_mins * 60,
-            "exam_settings": {"block_right_click": True, "block_ctrl_c": True}
-        })
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-    footer()
+        with col_b:
+            diff = st.selectbox("ความยาก", DIFFICULTY_OPTIONS)
+            n_q = st.number_input("จำนวนข้อ", min_value=1, max_value=50, value=15)
+            
+        est_time = (n_q * comps[comp_name].get("secs_per_q", 120)) // 60
+        st.info(f"⏱️ **เวลาที่แนะนำ:** {est_time} นาที (อ้างอิงจากมาตรฐานการสอบ {comp_name})")
+        
+        if st.button("เริ่มทำข้อสอบทันที 🚀", type="primary", use_container_width=True):
+            # Fetch questions from DB or generate mock
+            st.session_state.update({
+                "page": "exam", "competition": comp_name, "level": level, "difficulty": diff,
+                "questions": _generate_mock_questions(n_q), # Replace with actual DB fetch
+                "answers": {}, "flagged": set(), "current_idx": 0,
+                "start_time": time.time(), "time_limit": est_time * 60,
+                "settings": load_settings(comp_name)
+            })
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 def page_exam():
     if "questions" not in st.session_state:
-        st.warning("ไม่พบเซสชันการสอบที่ทำงานอยู่")
-        return
-
+        st.session_state["page"] = "dashboard"
+        st.rerun()
+        
     qs = st.session_state["questions"]
     ans = st.session_state["answers"]
-    flg = st.session_state["flagged"]
     idx = st.session_state["current_idx"]
-    setts = st.session_state.get("exam_settings", {})
+    flg = st.session_state["flagged"]
     
-    # Safety JS injection layer
-    st.markdown(get_advanced_anti_ai_js(setts), unsafe_allow_html=True)
+    # Anti-cheat injection
+    components.html(get_anti_ai_js(st.session_state.get("settings", {})), height=0)
     
-    rem = max(0.0, st.session_state["time_limit"] - (time.time() - st.session_state["start_time"]))
-    mins, secs = divmod(int(rem), 60)
+    # Timer logic
+    elapsed = time.time() - st.session_state["start_time"]
+    remaining = max(0.0, st.session_state["time_limit"] - elapsed)
+    mins, secs = divmod(int(remaining), 60)
     
-    if rem <= 0:
-        st.error("⏱ หมดเวลาการทำข้อสอบแล้ว! กำลังนำส่งกระดาษคำตอบอัตโนมัติ...")
+    if remaining == 0:
+        st.toast("หมดเวลา! กำลังส่งคำตอบอัตโนมัติ...", icon="⏳")
         time.sleep(1)
-        _submit_final_exam()
+        _submit_exam()
         return
 
-    warn = rem < 300
-    t_bg = "linear-gradient(135deg, #FEE2E2, #FEF2F2)" if warn else "linear-gradient(135deg, #EEF3FF, #F4F7FF)"
-    t_color = "#EF4444" if warn else "#1B2B6B"
-
-    # Header Testing Panel Style
+    # Sticky Header
     st.markdown(f"""
-    <div style='background:{COLOR_PRIMARY}; padding:20px 30px; border-radius:12px; display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;'>
+    <div style="display: flex; justify-content: space-between; align-items: center; background: white; padding: 1rem 2rem; border-radius: 12px; border: 1px solid #E2E8F0; margin-bottom: 1.5rem; position: sticky; top: 0; z-index: 999; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
         <div>
-            <h3 style='color:white !important; margin:0; font-size:18px;'>{st.session_state['competition']}</h3>
-            <span style='color:#93C5FD; font-size:12px;'>ระดับชั้น: {st.session_state['level']}</span>
+            <div style="font-weight: 600; font-size: 1.1rem; color: #1E3A8A;">{st.session_state['competition']}</div>
+            <div style="font-size: 0.85rem; color: #64748B;">{st.session_state['level']} • ข้อที่ {idx+1}/{len(qs)}</div>
         </div>
-        <div style='background:{t_bg}; padding:8px 20px; border-radius:8px; border:1px solid #CBD5E1; text-align:center;'>
-            <div style='font-size:10px; color:#64748B;'>เวลาที่เหลือ</div>
-            <div style='font-size:20px; font-weight:700; color:{t_color}; font-family:monospace;'>{mins:02d}:{secs:02d}</div>
+        <div style="text-align: right;">
+            <div style="font-size: 0.75rem; color: #64748B; text-transform: uppercase; font-weight: 600;">Time Remaining</div>
+            <div style="font-size: 1.5rem; font-weight: 700; color: {'#EF4444' if remaining < 300 else '#1E3A8A'}; font-family: monospace;">
+                {mins:02d}:{secs:02d}
+            </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
-
-    # Question Grid Navigation bar
-    cols = st.columns(len(qs) if len(qs) <= 15 else 15)
-    for i, item in enumerate(qs):
-        c_idx = i % 15
-        with cols[c_idx]:
-            if i == idx: lbl = f"🎯 {i+1}"
-            elif item["id"] in flg: lbl = "🚩"
-            elif item["id"] in ans: lbl = f"✓ {i+1}"
-            else: lbl = str(i+1)
-            
-            if st.button(lbl, key=f"n_s_{i}", use_container_width=True):
-                st.session_state["current_idx"] = i
-                st.rerun()
-
-    q = qs[idx]
-    st.markdown(f"""
-    <div class='premium-card' style='margin-top:20px;'>
-        <div style='display:flex; gap:10px; margin-bottom:12px;'>
-            <span style='background:#EEF3FF; color:#4A7CF7; padding:2px 10px; border-radius:12px; font-size:11px; font-weight:600;'>หัวข้อ: {q.get('topic')}</span>
-            <span style='background:#F1F5F9; color:#475569; padding:2px 10px; border-radius:12px; font-size:11px;'>คำถามข้อที่ {idx+1}/{len(qs)}</span>
-        </div>
-        <div class='math-container'>{q['question_text']}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Choice handling matrix
-    opts = [f"{lbl}. {txt}" for lbl, txt in zip(["A","B","C","D"], q["choices"])]
-    curr_choice = ans.get(q["id"], "")
-    sel_idx = ["A","B","C","D"].index(curr_choice) if curr_choice in ["A","B","C","D"] else None
     
-    sel = st.radio("โปรดทำเครื่องหมายเลือกคำตอบ:", opts, index=sel_idx, key=f"r_ch_{q['id']}")
-    if sel:
-        ans[q["id"]] = sel[0]
+    # Progress Bar
+    progress = len(ans) / len(qs)
+    st.progress(progress)
+    
+    # Question Card
+    q = qs[idx]
+    st.markdown("<div class='premium-card'>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <span style="background: #EEF2FF; color: #3B82F6; padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; margin-bottom: 1rem; display: inline-block;">
+        {q.get('topic', 'General')}
+    </span>
+    """, unsafe_allow_html=True)
+    
+    # Safe LaTeX rendering
+    st.markdown(f"<div class='math-box'>{q['question_text']}</div>", unsafe_allow_html=True)
+    
+    # Options Rendering
+    st.markdown("<br><strong style='color:#0F172A;'>เลือกคำตอบ:</strong>", unsafe_allow_html=True)
+    
+    options = [f"{chr(65+i)}. {c}" for i, c in enumerate(q.get("choices", []))]
+    current_val = ans.get(q["id"])
+    sel_idx = [chr(65+i) for i in range(len(options))].index(current_val) if current_val else None
+    
+    # Clean radio buttons
+    choice = st.radio("Options", options, index=sel_idx, label_visibility="collapsed")
+    if choice:
+        ans[q["id"]] = choice[0] # Save just the letter (A, B, C, D)
         st.session_state["answers"] = ans
 
-    # Nav footer control
-    st.markdown("<br>", unsafe_allow_html=True)
-    lc, mc, rc = st.columns(3)
-    with lc:
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Footer Navigation Controls
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
         if idx > 0:
-            if st.button("← ย้อนกลับข้อก่อนหน้า", use_container_width=True):
-                st.session_state["current_idx"] = idx - 1
+            if st.button("← ข้อก่อนหน้า", use_container_width=True):
+                st.session_state["current_idx"] -= 1
                 st.rerun()
-    with mc:
-        is_f = q["id"] in flg
-        if st.button("🏳️ เอาปักหมุดออก" if is_f else "🚩 ปักหมุดทบทวน", use_container_width=True):
-            if is_f: flg.remove(q["id"])
+    with col2:
+        is_flagged = q["id"] in flg
+        if st.button("🏳️ ยกเลิกปักหมุด" if is_flagged else "🚩 ปักหมุดไว้ทบทวน", use_container_width=True):
+            if is_flagged: flg.remove(q["id"])
             else: flg.add(q["id"])
             st.session_state["flagged"] = flg
             st.rerun()
-    with rc:
+    with col3:
         if idx < len(qs) - 1:
-            if st.button("ข้อต่อไป →", type="primary", use_container_width=True):
-                st.session_state["current_idx"] = idx + 1
+            if st.button("ข้อถัดไป →", type="primary", use_container_width=True):
+                st.session_state["current_idx"] += 1
                 st.rerun()
         else:
-            if st.button("🎉 ส่งกระดาษคำตอบ", type="primary", use_container_width=True):
-                _submit_final_exam()
+            if st.button("ส่งข้อสอบ ✅", type="primary", use_container_width=True):
+                _submit_exam()
 
-def _submit_final_exam():
-    qs = st.session_state["questions"]
-    ans = st.session_state["answers"]
-    res = compute_score(st.session_state["competition"], qs, ans)
-    save_session(st.session_state["uid"], st.session_state["competition"], st.session_state["level"], st.session_state["difficulty"], qs, ans, res, 120)
+def _submit_exam():
+    res = compute_score(st.session_state["competition"], st.session_state["questions"], st.session_state["answers"])
     st.session_state.update({"page": "result", "result": res})
     st.rerun()
 
 def page_result():
-    inject_css()
-    topbar("รายงานผลและบทวิเคราะห์คะแนนสอบ")
-    
     res = st.session_state.get("result", {})
-    st.markdown("<div class='premium-card' style='text-align:center;'>", unsafe_allow_html=True)
-    st.markdown(f"""
-        <h2 style='margin:0;'>คะแนนรวมของคุณได้</h2>
-        <div style='font-size:56px; font-weight:700; color:{COLOR_SECONDARY}; margin:10px 0;'>{res.get('score')} / {res.get('total')}</div>
-        <p style='color:#64748B;'>เปอร์เซ็นต์ความสำเร็จของชุดข้อสอบ: <strong>{res.get('pct'):.1f}%</strong></p>
-    """, unsafe_allow_html=True)
+    
+    st.markdown("<div class='premium-card' style='text-align: center;'>", unsafe_allow_html=True)
+    st.markdown("<h2>สรุปผลการประเมิน</h2>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size: 4rem; font-weight: 700; color: #3B82F6; line-height: 1;'>{res.get('score', 0)}<span style='font-size: 2rem; color: #94A3B8;'> / {res.get('total', 0)}</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<p style='font-size: 1.2rem; color: #64748B;'>ความถูกต้อง: <strong>{res.get('pct', 0)}%</strong></p>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
     
-    # Render Radar graph using Plotly
-    bd = res.get("breakdown", {})
-    cats = list(bd.keys())
-    values = [(bd[c]["correct"]/max(1, bd[c]["total"]))*100 for c in cats]
+    # Radar Chart
+    tbd = res.get("topic_breakdown", {})
+    if tbd:
+        topics = list(tbd.keys())
+        scores = [round((v["correct"] / max(1, v["total"])) * 100) for v in tbd.values()]
+        
+        fig = go.Figure(data=go.Scatterpolar(
+            r=scores + [scores[0]], theta=topics + [topics[0]], 
+            fill='toself', line_color='#3B82F6', fillcolor='rgba(59, 130, 246, 0.2)'
+        ))
+        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=False, margin=dict(t=20, b=20))
+        
+        st.markdown("<h3>🎯 การวิเคราะห์รายหัวข้อ (Skill Breakdown)</h3>", unsafe_allow_html=True)
+        st.plotly_chart(fig, use_container_width=True)
     
-    fig = go.Figure(data=go.Scatterpolar(r=values, theta=cats, fill='toself', line_color=COLOR_SECONDARY))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=False, height=350)
-    
-    st.markdown("<h3>📊 แผนภูมิเรดาร์วิเคราะห์ความแข็งแกร่งจำแนกตามรายวิชา</h3>", unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True)
-    
-    if st.button("กลับไปยังหน้า Dashboard หลัก", use_container_width=True):
+    if st.button("กลับสู่หน้าหลัก", use_container_width=True, type="primary"):
         st.session_state["page"] = "dashboard"
         st.rerun()
-    footer()
 
-def page_history(): inject_css(); topbar("ประวัติการทำข้อสอบย้อนหลัง"); st.info("ไม่พบรายการข้อมูลในฐานระบบขณะนี้"); footer()
-def page_leaderboard(): inject_css(); topbar("ตารางคะแนนสูงสุดยอดนักคณิตศาสตร์"); st.info("จะเปิดเผยคะแนนทันทีเมื่อการแข่งขันสดสิ้นสุด"); footer()
-def page_realtime(): inject_css(); topbar("ห้องสอบระบบเรียลไทม์"); st.info("กำลังรอสัญญาณเปิดระบบข้อสอบจากอาจารย์ผู้คุมสอบ..."); footer()
+def _generate_mock_questions(n):
+    """Helper to generate mock questions if DB is offline"""
+    qs = []
+    for i in range(n):
+        qs.append({
+            "id": f"q_mock_{i}",
+            "topic": random.choice(["Algebra", "Geometry", "Number Theory"]),
+            "question_text": f"พิจารณาสมการ $\\int_{{0}}^{{\\infty}} e^{{-x^2}} dx$. ค่าของสมการนี้ตรงกับตัวเลือกใด?",
+            "choices": ["$\\frac{\\sqrt{\\pi}}{2}$", "$\\sqrt{\\pi}$", "$\\frac{\\pi}{2}$", "$1$"],
+            "correct_answer": "A"
+        })
+    return qs
