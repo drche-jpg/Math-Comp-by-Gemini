@@ -187,17 +187,42 @@ def save_question(doc: dict): db.collection("questions").add(doc)
 
 def compute_score(competition, questions, answers) -> dict:
     rules = get_all_competitions().get(competition,{}).get("scoring",{"correct":1,"wrong":0,"blank":0})
-    raw = max_s = 0.0; tbd = {t:{"correct":0,"total":0} for t in TOPICS+["Other"]}; pqs = []
+    raw = max_s = 0.0
+    tbd = {t:{"correct":0,"total":0} for t in TOPICS+["Other"]}
+    pqs = []
+    
     for q in questions:
-        qid=q["id"]; topic=q.get("topic","Other")
-        if topic not in tbd: topic="Other"
-        ca=str(q.get("correct_answer","")).strip().upper(); ch=str(answers.get(qid,"")).strip().upper()
-        ok=ch==ca and ch!=""; blank=ch==""
-        raw += rules["correct"] if ok else (rules["blank"] if blank else rules["wrong"]); max_s+= rules["correct"]
-        tbd[topic]["total"]+=1; if ok: tbd[topic]["correct"]+=1
-        pqs.append({"qid":qid,"correct":ok,"chosen":answers.get(qid),"right_answer":q.get("correct_answer"),"time_sec":answers.get(f"{qid}__time",0)})
-    tbd = {k:v for k,v in tbd.items() if v["total"]>0}
-    return {"raw_score":round(raw,1),"max_score":round(max_s,1),"pct":round(raw/max_s*100,1) if max_s>0 else 0.0,"topic_breakdown":tbd,"per_question":pqs}
+        qid = q["id"]
+        topic = q.get("topic","Other")
+        if topic not in tbd: 
+            topic = "Other"
+            
+        ca = str(q.get("correct_answer","")).strip().upper()
+        ch = str(answers.get(qid,"")).strip().upper()
+        
+        ok = (ch == ca and ch != "")
+        blank = (ch == "")
+        
+        raw += rules["correct"] if ok else (rules["blank"] if blank else rules["wrong"])
+        max_s += rules["correct"]
+        
+        tbd[topic]["total"] += 1
+        # บรรทัดนี้ที่เคยพัง แก้โดยปัดลงมาบรรทัดใหม่
+        if ok: 
+            tbd[topic]["correct"] += 1
+            
+        pqs.append({
+            "qid": qid,
+            "correct": ok,
+            "chosen": answers.get(qid),
+            "right_answer": q.get("correct_answer"),
+            "time_sec": answers.get(f"{qid}__time",0)
+        })
+        
+    tbd = {k:v for k,v in tbd.items() if v["total"] > 0}
+    pct = round(raw/max_s*100, 1) if max_s > 0 else 0.0
+    
+    return {"raw_score":round(raw,1), "max_score":round(max_s,1), "pct":pct, "topic_breakdown":tbd, "per_question":pqs}
 
 def save_session(uid,competition,level,difficulty,questions,answers,result,duration) -> str:
     data = {"competition":competition,"level":level,"difficulty":difficulty,"timestamp_start":datetime.now(timezone.utc),"duration_sec":duration,"total_questions":len(questions),"raw_score":result["raw_score"],"max_score":result["max_score"],"pct":result["pct"],"topic_breakdown":result["topic_breakdown"],"answers":{q["id"]:{"chosen":answers.get(q["id"]),"correct":q.get("correct_answer"),"is_correct":pq["correct"],"time_sec":answers.get(f"{q['id']}__time",0),"topic":q.get("topic","Other")} for q,pq in zip(questions,result["per_question"])}}
