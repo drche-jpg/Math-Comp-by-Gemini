@@ -1,73 +1,70 @@
 """
 MathComp — app.py
-Application routing state controller and sidebar setup
-© Math Mission Thailand 2026
+Application entry point and routing manager
 """
 import streamlit as st
-from shared import inject_css, db, topbar, footer
+from shared import inject_premium_css
 
-# Setup page layout configs once
 st.set_page_config(
-    page_title="MathComp • Math Mission Thailand",
+    page_title="MathComp | Premium EdTech",
     page_icon="📐",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-from pages_student import page_login, page_dashboard, page_exam, page_result, page_history, page_leaderboard, page_realtime
-from pages_admin import page_admin, page_admin_analytics, page_admin_student_history
+from pages_student import page_login, page_dashboard, page_exam, page_result
+from pages_admin import page_admin
 
+# Initialize session state
 if "page" not in st.session_state:
     st.session_state["page"] = "login"
 
-inject_css()
+inject_premium_css()
 
-# Modern Sidebar design integration
-if "uid" in st.session_state:
+# --- SIDEBAR NAVIGATION ---
+if "uid" in st.session_state and st.session_state["page"] != "login":
     with st.sidebar:
         st.markdown(f"""
-        <div style='padding: 10px 0; border-bottom: 1px solid #E2E8F0; margin-bottom: 20px;'>
-            <h3 style='margin:0; font-size:16px; color:#1B2B6B;'>{st.session_state.get('display_name','')}</h3>
-            <span style='background:#EEF3FF; color:#4A7CF7; padding:2px 8px; border-radius:12px; font-size:11px; font-weight:600;'>
-                ROLE: {st.session_state.get('role','Student').upper()}
+        <div style="padding-bottom: 1.5rem; border-bottom: 1px solid #E2E8F0; margin-bottom: 1.5rem;">
+            <h3 style="margin: 0; font-size: 1.1rem; color: #1E3A8A;">{st.session_state.get('display_name', 'Student')}</h3>
+            <span style="font-size: 0.8rem; color: #64748B; text-transform: uppercase; letter-spacing: 0.05em;">
+                {st.session_state.get('role', 'student')} Account
             </span>
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🏠 แผงควบคุม (Dashboard)", use_container_width=True):
+        if st.button("🏠 แดชบอร์ดหลัก", use_container_width=True):
             st.session_state["page"] = "dashboard"
             st.rerun()
-        if st.button("📋 ประวัติการสอบ (History)", use_container_width=True):
+        if st.button("📊 ประวัติผลการสอบ", use_container_width=True):
             st.session_state["page"] = "history"
-            st.rerun()
-        if st.button("🏆 อันดับคะแนน (Leaderboard)", use_container_width=True):
-            st.session_state["page"] = "leaderboard"
             st.rerun()
             
         if st.session_state.get("role") == "admin":
-            st.markdown("<div style='margin:15px 0 5px 0; font-size:11px; color:#94A3B8; font-weight:600; text-transform:uppercase;'>Admin Center</div>", unsafe_allow_html=True)
-            if st.button("⚙️ แผงจัดการระบบ (Admin Panel)", use_container_width=True):
+            st.markdown("<div style='margin-top: 2rem; margin-bottom: 0.5rem; font-size: 0.75rem; color: #94A3B8; font-weight: 600; text-transform: uppercase;'>Admin Area</div>", unsafe_allow_html=True)
+            if st.button("⚙️ จัดการระบบ (Admin Panel)", use_container_width=True):
                 st.session_state["page"] = "admin"
                 st.rerun()
-            if st.button("📊 วิเคราะห์ภาพรวม (Analytics)", use_container_width=True):
-                st.session_state["page"] = "admin_analytics"
-                st.rerun()
                 
-        st.divider()
-        if st.button("🚪 ออกจากระบบ (Log Out)", use_container_width=True):
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        if st.button("🚪 ออกจากระบบ", use_container_width=True):
             st.session_state.clear()
             st.session_state["page"] = "login"
             st.rerun()
 
-# Execute page routing
-p = st.session_state["page"]
-if p == "login": page_login()
-elif p == "dashboard": page_dashboard()
-elif p == "exam": page_exam()
-elif p == "result": page_result()
-elif p == "history": page_history()
-elif p == "leaderboard": page_leaderboard()
-elif p == "realtime": page_realtime()
-elif p == "admin": page_admin()
-elif p == "admin_analytics": page_admin_analytics()
-elif p == "admin_student_history": page_admin_student_history()
+# --- ROUTER ---
+pages = {
+    "login": page_login,
+    "dashboard": page_dashboard,
+    "exam": page_exam,
+    "result": page_result,
+    "admin": page_admin
+}
+
+# Execute the current page function
+if st.session_state["page"] in pages:
+    pages[st.session_state["page"]]()
+else:
+    st.error("Page not found.")
+    st.session_state["page"] = "login"
+    st.rerun()
